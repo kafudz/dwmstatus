@@ -1,0 +1,23 @@
+.TH DWMSTATUS 1 dwmstatus\-VERSION
+.SH NAME
+dwmstatus \- status bar untuk dynamic window manager (dwm)
+.SH SYNOPSIS
+.B dwmstatus
+.SH DESCRIPTION
+.B dwmstatus
+adalah aplikasi status bar ringan yang berjalan di latar belakang untuk memperbarui nama jendela utama (root window name) pada sistem X11, yang digunakan oleh dwm untuk menampilkan status sistem.
+.P
+Yang ditampilkan, dari kiri ke kanan: kecerahan layar, volume, baterai, dan waktu. Bagian yang tidak tersedia (misalnya baterai pada desktop) disembunyikan. Status diperbarui setiap 2 detik.
+.P
+Kecerahan dan baterai dibaca langsung dari
+.IR /sys/class .
+Volume dibaca dengan
+.BR wpctl (1).
+Diperlukan Nerd Font pada dwm agar ikon tampil.
+.SH SIGNALS
+.B SIGINT
+dan
+.B SIGTERM
+menghentikan dwmstatus dengan bersih.
+.SH AUTHORS
+by 20h

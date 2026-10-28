@@ -1,0 +1,20 @@
+#!/bin/sh
+# Restart dwmstatus (e.g. after rebuilding it).
+
+# dwmstatus talks to X, so it needs a display
+: "${DISPLAY:=:0}"
+export DISPLAY
+
+# Stop the old instance and wait (max ~2s) until it is really gone
+if pkill -x dwmstatus 2>/dev/null; then
+	printf "Killing old dwmstatus ... "
+	i=0
+	while pgrep -x dwmstatus >/dev/null 2>&1 && [ "$i" -lt 20 ]; do
+		sleep 0.1
+		i=$((i + 1))
+	done
+	printf "done.\n"
+fi
+
+# Start the new one, detached from this shell
+nohup dwmstatus >/dev/null 2>&1 &
