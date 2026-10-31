@@ -292,28 +292,26 @@ get_capslock(char *buf, size_t size)
     buf[0] = '\0';
     if (XkbGetState(dpy, XkbUseCoreKbd, &state) == Success &&
         (state.locked_mods & LockMask))
-        snprintf(buf, size, "%s  ", ICON_CAPS_ON); /* Trailing space prevents touching the separator */
+        snprintf(buf, size, "%s", ICON_CAPS_ON);
 }
 
-/* Optimized append: tracks length manually, uses wider "  |  " separator */
+/* Slimmer separator: single space on each side of the pipe */
 static size_t
 append(char *dst, size_t size, size_t len, const char *seg)
 {
     size_t seg_len;
     if (!seg || seg[0] == '\0')
         return len;
-    
+
     seg_len = strlen(seg);
-    if (len > 0 && len + 5 < size) {
-        dst[len++] = ' ';
+    if (len > 0 && len + 3 < size) {
         dst[len++] = ' ';
         dst[len++] = '|';
-        dst[len++] = ' ';
         dst[len++] = ' ';
     }
     if (len + seg_len >= size)
         seg_len = size - len - 1;
-    
+
     memcpy(dst + len, seg, seg_len);
     len += seg_len;
     dst[len] = '\0';
