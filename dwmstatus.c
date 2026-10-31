@@ -1,17 +1,13 @@
 /*
- * dwmstatus - status bar for dwm (based on 20h's dwmstatus)
- * Requires a Nerd Font in dwm's config.h, e.g.
- *   static const char *fonts[] = { "JetBrainsMono Nerd Font:size=10" };
- *
- * Shows: Caps Lock | Brightness | Volume | Battery | Time
- * Optional runtime tool: wpctl (PipeWire) for volume.
- * Brightness and battery are read straight from sysfs (no subprocess).
- * Segments that are not available on the machine (no backlight, no
- * battery) are hidden instead of printing "n/a".
- *
- * Build: gcc -O2 -Wall -o dwmstatus dwmstatus.c -lX11
- */
-
+dwmstatus - status bar for dwm (based on 20h's dwmstatus)
+Requires a Nerd Font in dwm's config.h, e.g.
+static const char *fonts[] = { "JetBrainsMono Nerd Font:size=10" };
+Shows: Caps Lock | Brightness | Volume | Battery | Temperature | Time
+Optional runtime tool: wpctl (PipeWire) for volume.
+Brightness, battery, and temperature are read straight from sysfs (no subprocess).
+Segments that are not available on the machine are hidden instead of printing "n/a".
+Build: gcc -O2 -Wall -o dwmstatus dwmstatus.c -lX11
+*/
 #include <dirent.h>
 #include <limits.h>
 #include <signal.h>
@@ -20,7 +16,6 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
-
 #include <X11/Xlib.h>
 #include <X11/XKBlib.h>
 
@@ -31,21 +26,22 @@ static const char *tzlocal = "Asia/Jakarta";
 
 #define PSDIR "/sys/class/power_supply"
 #define BLDIR "/sys/class/backlight"
+#define HWMON "/sys/class/hwmon/hwmon0" /* Adjust if your thermal zone is different */
 
-/* Nerd Font icons as UTF-8 byte sequences (survive copy/paste and editors) */
-#define ICON_BRIGHTNESS "\xef\x86\x85"  /* U+F185 nf-fa-sun_o */
-#define ICON_VOL_OFF    "\xef\x80\xa6"  /* U+F026 nf-fa-volume_off */
-#define ICON_VOL_LOW    "\xef\x80\xa7"  /* U+F027 nf-fa-volume_down */
-#define ICON_VOL_HIGH   "\xef\x80\xa8"  /* U+F028 nf-fa-volume_up */
-#define ICON_BAT_FULL   "\xef\x89\x80"  /* U+F240 nf-fa-battery_full */
-#define ICON_BAT_3Q     "\xef\x89\x81"  /* U+F241 nf-fa-battery_three_quarters */
-#define ICON_BAT_HALF   "\xef\x89\x82"  /* U+F242 nf-fa-battery_half */
-#define ICON_BAT_1Q     "\xef\x89\x83"  /* U+F243 nf-fa-battery_quarter */
-#define ICON_BAT_EMPTY  "\xef\x89\x84"  /* U+F244 nf-fa-battery_empty */
-#define ICON_BOLT       "\xef\x83\xa7"  /* U+F0E7 nf-fa-bolt */
-#define ICON_CLOCK      "\xef\x80\x97"  /* U+F017 nf-fa-clock_o */
-#define ICON_CAPS_ON    "\xef\x80\xa3"  /* U+F023 nf-fa-lock */
-#define ICON_CAPS_OFF   "\xef\x82\x9c"  /* U+F09C nf-fa-unlock */
+/* Nerd Font icons as UTF-8 byte sequences (Fixed comment blocks) */
+#define ICON_BRIGHTNESS  "\xef\x86\x85 "  /* U+F185 nf-fa-sun_o */
+#define ICON_VOL_OFF     "\xef\x80\xa6 "  /* U+F026 nf-fa-volume_off */
+#define ICON_VOL_LOW     "\xef\x80\xa7 "  /* U+F027 nf-fa-volume_down */
+#define ICON_VOL_HIGH    "\xef\x80\xa8 "  /* U+F028 nf-fa-volume_up */
+#define ICON_BAT_FULL    "\xef\x89\x80 "  /* U+F240 nf-fa-battery_full */
+#define ICON_BAT_3Q      "\xef\x89\x81 "  /* U+F241 nf-fa-battery_three_quarters */
+#define ICON_BAT_HALF    "\xef\x89\x82 "  /* U+F242 nf-fa-battery_half */
+#define ICON_BAT_1Q      "\xef\x89\x83 "  /* U+F243 nf-fa-battery_quarter */
+#define ICON_BAT_EMPTY   "\xef\x89\x84 "  /* U+F244 nf-fa-battery_empty */
+#define ICON_BOLT        "\xef\x83\xa7 "  /* U+F0E7 nf-fa-bolt */
+#define ICON_CLOCK       "\xef\x80\x97 "  /* U+F017 nf-fa-clock_o */
+#define ICON_CAPS_ON     "\xef\x80\xa3 "  /* U+F023 nf-fa-lock */
+#define ICON_TEMP        "\xef\x8b\x87 "  /* U+F2C7 nf-fa-thermometer-half */
 
 static Display *dpy;
 static volatile sig_atomic_t running = 1;
@@ -70,7 +66,6 @@ readfile(const char *dir, const char *file, char *buf, size_t size)
 {
 	char path[PATH_MAX];
 	FILE *fp;
-
 	snprintf(path, sizeof(path), "%s/%s", dir, file);
 	if (!(fp = fopen(path, "r")))
 		return -1;
@@ -88,7 +83,6 @@ static int
 readlong(const char *dir, const char *file, long *out)
 {
 	char buf[64], *end;
-
 	if (readfile(dir, file, buf, sizeof(buf)) < 0)
 		return -1;
 	*out = strtol(buf, &end, 10);
@@ -102,7 +96,6 @@ find_battery(char *out, size_t size)
 	DIR *d;
 	struct dirent *e;
 	char path[PATH_MAX], val[32];
-
 	if (!(d = opendir(PSDIR)))
 		return -1;
 	while ((e = readdir(d))) {
@@ -125,7 +118,7 @@ find_battery(char *out, size_t size)
 }
 
 /* Battery percentage: "capacity" if the driver has it, else derived from
- * the charge_* or energy_* files (older ACPI drivers). -1 on failure. */
+the charge_* or energy_* files (older ACPI drivers). -1 on failure. */
 static int
 battery_percent(const char *base)
 {
@@ -134,10 +127,8 @@ battery_percent(const char *base)
 	static const char *dsgn[] = { "charge_full_design", "energy_full_design" };
 	long cap, n, f;
 	int i;
-
 	if (readlong(base, "capacity", &cap) == 0)
 		return cap < 0 ? 0 : cap > 100 ? 100 : (int)cap;
-
 	for (i = 0; i < 2; i++) {
 		if (readlong(base, now[i], &n) < 0)
 			continue;
@@ -156,19 +147,13 @@ get_battery(const char *base, char *buf, size_t size)
 	char status[32];
 	const char *icon;
 	int capacity, charging = 0;
-
 	buf[0] = '\0';
 	if (base == NULL)
 		return;
-
-	if ((capacity = battery_percent(base)) < 0) {
-		snprintf(buf, size, "n/a");
-		return;
-	}
-
+	if ((capacity = battery_percent(base)) < 0)
+		return; /* hide segment on failure instead of "n/a" */
 	if (readfile(base, "status", status, sizeof(status)) == 0)
 		charging = (strcmp(status, "Charging") == 0);
-
 	if (capacity >= 88)
 		icon = ICON_BAT_FULL;
 	else if (capacity >= 63)
@@ -179,7 +164,6 @@ get_battery(const char *base, char *buf, size_t size)
 		icon = ICON_BAT_1Q;
 	else
 		icon = ICON_BAT_EMPTY;
-
 	snprintf(buf, size, "%s%s  %d%%", charging ? ICON_BOLT " " : "", icon,
 	         capacity);
 }
@@ -190,7 +174,6 @@ find_backlight(char *out, size_t size)
 {
 	DIR *d;
 	struct dirent *e;
-
 	if (!(d = opendir(BLDIR)))
 		return -1;
 	while ((e = readdir(d))) {
@@ -209,16 +192,12 @@ get_brightness(char *buf, size_t size)
 {
 	static char dev[PATH_MAX];
 	long cur, max;
-
 	buf[0] = '\0';
 	if (dev[0] == '\0' && find_backlight(dev, sizeof(dev)) < 0)
 		return; /* no backlight (desktop): hide segment */
-
 	if (readlong(dev, "brightness", &cur) < 0 ||
-	    readlong(dev, "max_brightness", &max) < 0 || max <= 0) {
-		snprintf(buf, size, "%s  n/a", ICON_BRIGHTNESS);
+	    readlong(dev, "max_brightness", &max) < 0 || max <= 0)
 		return;
-	}
 	snprintf(buf, size, "%s  %ld%%", ICON_BRIGHTNESS, (cur * 100 + max / 2) / max);
 }
 
@@ -230,24 +209,19 @@ get_volume(char *buf, size_t size)
 	float vol = 0.0f;
 	int volume;
 	const char *icon;
-
 	if (!(fp = popen("wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null", "r"))) {
-		snprintf(buf, size, "%s  n/a", ICON_VOL_OFF);
-		return;
+		return; /* hide segment if wpctl is missing */
 	}
 	if (!fgets(line, sizeof(line), fp) ||
 	    sscanf(line, "Volume: %f", &vol) != 1) {
 		pclose(fp);
-		snprintf(buf, size, "%s  n/a", ICON_VOL_OFF);
 		return;
 	}
 	pclose(fp);
-
 	if (strstr(line, "MUTED")) {
 		snprintf(buf, size, "%s  muted", ICON_VOL_OFF);
 		return;
 	}
-
 	volume = (int)(vol * 100 + 0.5f);
 	if (volume == 0)
 		icon = ICON_VOL_OFF;
@@ -255,8 +229,19 @@ get_volume(char *buf, size_t size)
 		icon = ICON_VOL_LOW;
 	else
 		icon = ICON_VOL_HIGH;
-
 	snprintf(buf, size, "%s  %d%%", icon, volume);
+}
+
+/* Native Temperature reading using existing safe readlong (No malloc/free needed) */
+static void
+get_temperature(char *buf, size_t size)
+{
+	long temp;
+	buf[0] = '\0';
+	/* Read from hwmon0/temp1_input. Adjust HWMON macro at the top if needed. */
+	if (readlong(HWMON, "temp1_input", &temp) < 0)
+		return; /* hide segment if thermal zone not found */
+	snprintf(buf, size, "%s  %ld°C", ICON_TEMP, temp / 1000);
 }
 
 static void
@@ -264,22 +249,19 @@ get_time(char *buf, size_t size)
 {
 	time_t t = time(NULL);
 	struct tm *tm = localtime(&t);
-
 	if (tm == NULL || strftime(buf, size, ICON_CLOCK "  %a %d %b %H:%M", tm) == 0)
 		buf[0] = '\0';
 }
 
-/* Caps Lock: shows a lock icon only while Caps Lock is active. */
+/* Caps Lock: shows a lock icon ONLY while Caps Lock is active. Hidden otherwise. */
 static void
 get_capslock(char *buf, size_t size)
 {
 	XkbStateRec state;
-	int on = 0;
-
+	buf[0] = '\0';
 	if (XkbGetState(dpy, XkbUseCoreKbd, &state) == Success &&
 	    (state.locked_mods & LockMask))
-		on = 1;
-	snprintf(buf, size, "%s", on ? ICON_CAPS_ON : ICON_CAPS_OFF);
+		snprintf(buf, size, "%s", ICON_CAPS_ON);
 }
 
 /* Appends seg to dst, separated by " | ". Empty segments are skipped. */
@@ -287,7 +269,6 @@ static void
 append(char *dst, size_t size, const char *seg)
 {
 	size_t len = strlen(dst);
-
 	if (seg[0] == '\0')
 		return;
 	snprintf(dst + len, size - len, "%s%s", len ? " | " : "", seg);
@@ -298,7 +279,7 @@ main(void)
 {
 	struct sigaction sa;
 	char bat_path[PATH_MAX], body[256], status[300];
-	char caps[32], bri[64], vol[64], bat[64], tim[64];
+	char caps[32], bri[64], vol[64], bat[64], temp[64], tim[64];
 	const char *batpath = NULL;
 
 	if (!(dpy = XOpenDisplay(NULL))) {
@@ -325,14 +306,16 @@ main(void)
 		get_brightness(bri, sizeof(bri));
 		get_volume(vol, sizeof(vol));
 		get_battery(batpath, bat, sizeof(bat));
+		get_temperature(temp, sizeof(temp));
 		get_time(tim, sizeof(tim));
 
-		/* Caps Lock | Brightness | Volume | Battery | Time */
+		/* Caps Lock | Brightness | Volume | Battery | Temperature | Time */
 		body[0] = '\0';
 		append(body, sizeof(body), caps);
 		append(body, sizeof(body), bri);
 		append(body, sizeof(body), vol);
 		append(body, sizeof(body), bat);
+		append(body, sizeof(body), temp);
 		append(body, sizeof(body), tim);
 
 		snprintf(status, sizeof(status), " %s ", body);

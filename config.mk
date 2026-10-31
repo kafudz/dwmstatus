@@ -12,9 +12,10 @@ MANPREFIX = ${PREFIX}/share/man
 INCS = -I.
 LIBS = -lX11
 
-# flags: optimised for size, debug symbols stripped
+# flags: optimised for speed, debug symbols stripped
+# NOTE: The backslashes before the quotes are strictly required!
 CPPFLAGS = -DVERSION=\"${VERSION}\" -D_DEFAULT_SOURCE
-CFLAGS = -std=c99 -pedantic -Wall -Wextra -Os ${INCS} ${CPPFLAGS}
+CFLAGS = -std=c99 -pedantic -Wall -Wextra -O2 ${INCS} ${CPPFLAGS}
 LDFLAGS = -s ${LIBS}
 
 # compiler and linker
