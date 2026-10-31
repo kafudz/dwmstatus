@@ -1,8 +1,7 @@
 NAME = dwmstatus
-VERSION = 1.1
+VERSION = 1.2
 
 # Customize below to fit your system
-
 # paths
 PREFIX = /usr/local
 MANPREFIX = ${PREFIX}/share/man
@@ -14,7 +13,7 @@ LIBS = -lX11
 
 # flags: optimised for speed, debug symbols stripped
 # NOTE: The backslashes before the quotes are strictly required!
-CPPFLAGS = -DVERSION=\"${VERSION}\" -D_DEFAULT_SOURCE
+CPPFLAGS = -DVERSION="${VERSION}" -D_DEFAULT_SOURCE
 CFLAGS = -std=c99 -pedantic -Wall -Wextra -O2 ${INCS} ${CPPFLAGS}
 LDFLAGS = -s ${LIBS}
 
