@@ -60,7 +60,6 @@ static void
 setstatus(const char *str)
 {
     XStoreName(dpy, DefaultRootWindow(dpy), str);
-    /* XFlush is much faster than XSync because it doesn't block waiting for the X server's reply */
     XFlush(dpy); 
 }
 
@@ -184,7 +183,8 @@ get_battery(const char *base, char *buf, size_t size)
     else
         icon = ICON_BAT_EMPTY;
 
-    snprintf(buf, size, "%s%s %d%%", charging ? ICON_BOLT " " : "", icon, capacity);
+    /* Added extra spaces after icons for better visual separation */
+    snprintf(buf, size, "%s%s  %d%%", charging ? ICON_BOLT "  " : "", icon, capacity);
 }
 
 /* First backlight device in sysfs. 0 on success. */
@@ -223,7 +223,7 @@ get_brightness(char *buf, size_t size)
         readlong(dev, "max_brightness", &max) < 0 || max <= 0)
         return;
 
-    snprintf(buf, size, "%s %ld%%", ICON_BRIGHTNESS, (cur * 100 + max / 2) / max);
+    snprintf(buf, size, "%s  %ld%%", ICON_BRIGHTNESS, (cur * 100 + max / 2) / max);
 }
 
 static void
@@ -246,7 +246,7 @@ get_volume(char *buf, size_t size)
     pclose(fp);
 
     if (strstr(line, "MUTED")) {
-        snprintf(buf, size, "%s muted", ICON_VOL_OFF);
+        snprintf(buf, size, "%s  muted", ICON_VOL_OFF);
         return;
     }
 
@@ -258,7 +258,7 @@ get_volume(char *buf, size_t size)
     else
         icon = ICON_VOL_HIGH;
 
-    snprintf(buf, size, "%s %d%%", icon, volume);
+    snprintf(buf, size, "%s  %d%%", icon, volume);
 }
 
 /* Native Temperature reading */
@@ -271,7 +271,7 @@ get_temperature(char *buf, size_t size)
     if (readlong(HWMON, "temp1_input", &temp) < 0)
         return; /* hide segment if thermal zone not found */
 
-    snprintf(buf, size, "%s %ld°C", ICON_TEMP, temp / 1000);
+    snprintf(buf, size, "%s  %ld°C", ICON_TEMP, temp / 1000);
 }
 
 static void
@@ -280,7 +280,7 @@ get_time(char *buf, size_t size)
     time_t t = time(NULL);
     struct tm *tm = localtime(&t);
 
-    if (tm == NULL || strftime(buf, size, ICON_CLOCK " %a %d %b %H:%M", tm) == 0)
+    if (tm == NULL || strftime(buf, size, "%s  %a %d %b %H:%M", ICON_CLOCK, tm) == 0)
         buf[0] = '\0';
 }
 
@@ -292,10 +292,10 @@ get_capslock(char *buf, size_t size)
     buf[0] = '\0';
     if (XkbGetState(dpy, XkbUseCoreKbd, &state) == Success &&
         (state.locked_mods & LockMask))
-        snprintf(buf, size, "%s", ICON_CAPS_ON);
+        snprintf(buf, size, "%s  ", ICON_CAPS_ON); /* Trailing space prevents touching the separator */
 }
 
-/* Optimized append: tracks length manually to avoid calling strlen(dst) repeatedly */
+/* Optimized append: tracks length manually, uses wider "  |  " separator */
 static size_t
 append(char *dst, size_t size, size_t len, const char *seg)
 {
@@ -304,9 +304,11 @@ append(char *dst, size_t size, size_t len, const char *seg)
         return len;
     
     seg_len = strlen(seg);
-    if (len > 0 && len + 3 < size) {
+    if (len > 0 && len + 5 < size) {
+        dst[len++] = ' ';
         dst[len++] = ' ';
         dst[len++] = '|';
+        dst[len++] = ' ';
         dst[len++] = ' ';
     }
     if (len + seg_len >= size)
@@ -332,14 +334,12 @@ main(void)
         return 1;
     }
 
-    /* exit cleanly on SIGINT/SIGTERM */
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = onsignal;
     sigemptyset(&sa.sa_mask);
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
 
-    /* TZ never changes, set it once */
     setenv("TZ", tzlocal, 1);
     tzset();
 
@@ -354,7 +354,6 @@ main(void)
         get_temperature(temp, sizeof(temp));
         get_time(tim, sizeof(tim));
 
-        /* Build status string */
         len = 0;
         status[0] = '\0';
         
@@ -368,7 +367,7 @@ main(void)
         setstatus(status);
         
         if (running)
-            usleep(INTERVAL_US); /* 0.5s sleep for <1s responsiveness */
+            usleep(INTERVAL_US);
     }
 
     setstatus("");
