@@ -280,7 +280,7 @@ get_time(char *buf, size_t size)
     time_t t = time(NULL);
     struct tm *tm = localtime(&t);
 
-    if (tm == NULL || strftime(buf, size, "%s  %a %d %b %H:%M", ICON_CLOCK, tm) == 0)
+    if (tm == NULL || strftime(buf, size, ICON_CLOCK "  %a %d %b %H:%M", tm) == 0)
         buf[0] = '\0';
 }
 
