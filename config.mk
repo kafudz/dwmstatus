@@ -12,8 +12,9 @@ INCS = -I.
 LIBS = -lX11
 
 # flags: optimised for speed, debug symbols stripped
-# NOTE: The backslashes before the quotes are strictly required!
-CPPFLAGS = -DVERSION="${VERSION}" -D_DEFAULT_SOURCE
+# NOTE: The backslashes before the quotes are strictly required:
+# VERSION must reach the compiler as a C string literal ("1.2").
+CPPFLAGS = -DVERSION=\"${VERSION}\" -D_DEFAULT_SOURCE
 CFLAGS = -std=c99 -pedantic -Wall -Wextra -O2 ${INCS} ${CPPFLAGS}
 LDFLAGS = -s ${LIBS}
 

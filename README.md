@@ -13,13 +13,17 @@ Feel free to read/copy it, but expect to edit the source for your own system.
 
 ## What it shows
 
-- Caps Lock state
+Segments are shown left to right; any segment that is not available is hidden.
+
+- Caps Lock state (icon only while active)
 - Brightness (from `/sys/class/backlight`)
 - Volume (via `wpctl`; hidden if unavailable)
 - Battery (from `/sys/class/power_supply`)
-- Clock (timezone)
+- CPU temperature (from `/sys/class/hwmon`, matched by driver name:
+  `coretemp`, `k10temp`, `zenpower`, `cpu_thermal`, `acpitz`)
+- Clock (timezone is set in `dwmstatus.c`)
 
-Uses Nerd Font icons. Make sure your dwm font supports them.
+Updates every 0.5 seconds. Uses Nerd Font icons. Make sure your dwm font supports them.
 
 ## Build
 
@@ -27,3 +31,16 @@ Uses Nerd Font icons. Make sure your dwm font supports them.
 git clone https://github.com/kafudz/dwmstatus.git
 cd dwmstatus
 make
+sudo make install
+```
+
+`dwmstatus -v` prints the version.
+
+## Restart
+
+After rebuilding, run `dwmstatus-restart` (installed next to `dwmstatus`) to replace
+the running instance. Or start it from your `.xinitrc` / autostart:
+
+```bash
+dwmstatus &
+```
