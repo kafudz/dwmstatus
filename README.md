@@ -17,7 +17,7 @@ Feel free to read/copy it, but expect to edit the source for your own system.
 - Brightness (from `/sys/class/backlight`)
 - Volume (via `wpctl`; hidden if unavailable)
 - Battery (from `/sys/class/power_supply`)
-- Clock (timezone hardcoded to `Asia/Jakarta`)
+- Clock (timezone)
 
 Uses Nerd Font icons. Make sure your dwm font supports them.
 
