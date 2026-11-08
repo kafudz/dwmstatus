@@ -28,6 +28,10 @@ Build: gcc -O2 -Wall -o dwmstatus dwmstatus.c -lX11
 #include <X11/Xlib.h>
 #include <X11/XKBlib.h>
 
+#ifndef VERSION
+#define VERSION "unknown"
+#endif
+
 /*
  * Poll intervals (milliseconds). Raising VOLUME_INTERVAL_MS makes the daemon
  * even quieter; it costs one wpctl process per update.
@@ -247,8 +251,8 @@ battery_percent(const char *base)
             (read_long_attr(base, dsgn[i], &f) < 0 || f <= 0))
             continue;
 
-        /* Use double to avoid n * 100 overflowing on 32-bit systems. */
-        cap = (long)((double)n * 100.0 / (double)f + 0.5);
+        /* 64-bit math: n * 100 can overflow a 32-bit long. */
+        cap = (long)(((long long)n * 100 + f / 2) / f);
         return cap < 0 ? 0 : cap > 100 ? 100 : (int)cap;
     }
     return -1;
@@ -393,16 +397,21 @@ find_temp_input(const char *dir, char *out, size_t size)
 
 /*
  * Locates a temperature sensor without assuming a hwmon number (hwmonN is
- * not stable across boots). Prefers CPU sensors, then any hwmon sensor,
- * and finally falls back to /sys/class/thermal.
+ * not stable across boots). Preferred CPU drivers win in the order listed
+ * below, then any hwmon sensor, then /sys/class/thermal.
  */
 static int
 find_temperature(char *out, size_t size)
 {
+    static const char *names[] = {
+        "coretemp", "k10temp", "zenpower", "cpu_thermal", "acpitz"
+    };
+    const size_t nnames = sizeof(names) / sizeof(names[0]);
     DIR *d;
     struct dirent *e;
     char dir[PATH_MAX], name[64], tpath[PATH_MAX];
-    char fallback[PATH_MAX] = "";
+    char found[PATH_MAX] = "", fallback[PATH_MAX] = "";
+    size_t i, best_prio = nnames;
 
     if ((d = opendir(HWMONDIR))) {
         while ((e = readdir(d))) {
@@ -413,22 +422,25 @@ find_temperature(char *out, size_t size)
             if (find_temp_input(dir, tpath, sizeof(tpath)) < 0)
                 continue;
 
-            if (read_attr(dir, "name", name, sizeof(name)) == 0 &&
-                (strcmp(name, "coretemp") == 0 ||
-                 strcmp(name, "k10temp") == 0 ||
-                 strcmp(name, "zenpower") == 0)) {
-                snprintf(out, size, "%s", tpath);
-                closedir(d);
-                return 0;
+            /* Remember the first sensor as a generic fallback. */
+            if (found[0] == '\0')
+                snprintf(found, sizeof(found), "%s", tpath);
+
+            if (read_attr(dir, "name", name, sizeof(name)) < 0)
+                continue;
+            for (i = 0; i < nnames; i++)
+                if (strcmp(name, names[i]) == 0)
+                    break;
+            if (i < best_prio) {
+                best_prio = i;
+                snprintf(found, sizeof(found), "%s", tpath);
             }
-            if (fallback[0] == '\0')
-                snprintf(fallback, sizeof(fallback), "%s", tpath);
         }
         closedir(d);
     }
 
-    if (fallback[0] != '\0') {
-        snprintf(out, size, "%s", fallback);
+    if (found[0] != '\0') {
+        snprintf(out, size, "%s", found);
         return 0;
     }
 
@@ -740,7 +752,7 @@ discover(void)
 }
 
 int
-main(void)
+main(int argc, char *argv[])
 {
     struct sigaction sa;
     char status[512], last_status[512];
@@ -749,6 +761,14 @@ main(void)
     long long now, last_sysfs, last_volume, last_discovery;
     int have_last = 0;
     size_t len;
+
+    if (argc == 2 && strcmp(argv[1], "-v") == 0) {
+        puts("dwmstatus-" VERSION);
+        return 0;
+    } else if (argc != 1) {
+        fputs("usage: dwmstatus [-v]\n", stderr);
+        return 1;
+    }
 
     if (!(dpy = XOpenDisplay(NULL))) {
         fprintf(stderr, "dwmstatus: cannot open display.\n");
