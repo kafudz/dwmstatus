@@ -5,6 +5,11 @@
 : "${DISPLAY:=:0}"
 export DISPLAY
 
+if ! command -v dwmstatus >/dev/null 2>&1; then
+	printf "dwmstatus: not found in PATH\n" >&2
+	exit 1
+fi
+
 # Stop the old instance and wait (max ~2s) until it is really gone
 if pkill -x dwmstatus 2>/dev/null; then
 	printf "Killing old dwmstatus ... "
@@ -13,8 +18,13 @@ if pkill -x dwmstatus 2>/dev/null; then
 		sleep 0.1
 		i=$((i + 1))
 	done
+	# Last resort if the old instance ignored SIGTERM
+	if pgrep -x dwmstatus >/dev/null 2>&1; then
+		pkill -KILL -x dwmstatus 2>/dev/null
+		sleep 0.1
+	fi
 	printf "done.\n"
 fi
 
 # Start the new one, detached from this shell
-nohup dwmstatus >/dev/null 2>&1 &
+nohup dwmstatus </dev/null >/dev/null 2>&1 &
