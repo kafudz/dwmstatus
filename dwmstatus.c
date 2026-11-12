@@ -2,9 +2,9 @@
 dwmstatus - status bar for dwm (based on 20h's dwmstatus)
 Requires a Nerd Font in dwm's config.h, e.g.
 static const char *fonts[] = { "JetBrainsMono Nerd Font:size=10" };
-Shows: Caps Lock | Brightness | Volume | Battery | Temperature | Time
+Shows: Caps Lock | Brightness | Volume | Battery | Time
 Optional runtime tool: wpctl (PipeWire) for volume.
-Brightness, battery, and temperature are read straight from sysfs (no subprocess).
+Brightness and battery are read straight from sysfs (no subprocess).
 Segments that are not available on the machine are hidden instead of printing "n/a".
 The root window name is only updated when the status actually changes, so dwm
 does not redraw its bar twice per second for an identical string.
@@ -12,7 +12,6 @@ does not redraw its bar twice per second for an identical string.
 Build: gcc -O2 -Wall -o dwmstatus dwmstatus.c -lX11
 */
 
-#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -37,7 +36,7 @@ Build: gcc -O2 -Wall -o dwmstatus dwmstatus.c -lX11
  * even quieter; it costs one wpctl process per update.
  */
 #define UPDATE_INTERVAL_MS     500   /* Caps Lock and clock */
-#define SYSFS_INTERVAL_MS     1000   /* brightness, battery, temperature */
+#define SYSFS_INTERVAL_MS     1000   /* brightness and battery */
 #define VOLUME_INTERVAL_MS    2000   /* spawning wpctl is the expensive part */
 #define VOLUME_TIMEOUT_MS      200   /* do not let a stuck wpctl freeze us */
 #define DISCOVERY_INTERVAL_MS 30000  /* re-scan sysfs for hotplugged devices */
@@ -45,10 +44,8 @@ Build: gcc -O2 -Wall -o dwmstatus dwmstatus.c -lX11
 /* Local timezone (overridable with DWMSTATUS_TZ in the environment). */
 static const char *tzlocal = "Asia/Jakarta";
 
-#define PSDIR     "/sys/class/power_supply"
-#define BLDIR     "/sys/class/backlight"
-#define HWMONDIR  "/sys/class/hwmon"
-#define THERMALDIR "/sys/class/thermal"
+#define PSDIR "/sys/class/power_supply"
+#define BLDIR "/sys/class/backlight"
 
 /* Nerd Font icons as UTF-8 byte sequences */
 #define ICON_BRIGHTNESS   "\xef\x86\x85"  /* U+F185 nf-fa-sun_o */
@@ -62,8 +59,7 @@ static const char *tzlocal = "Asia/Jakarta";
 #define ICON_BAT_EMPTY    "\xef\x89\x84"  /* U+F244 nf-fa-battery_empty */
 #define ICON_BOLT         "\xef\x83\xa7"  /* U+F0E7 nf-fa-bolt */
 #define ICON_CLOCK        "\xef\x80\x97"  /* U+F017 nf-fa-clock_o */
-#define ICON_CAPS_ON      "\xef\x80\xa3"  /* U+F023 nf-fa-lock */
-#define ICON_TEMP         "\xef\x8b\x87"  /* U+F2C7 nf-fa-thermometer-half */
+#define ICON_CAPS_ON      "\xe2\x87\xaa"  /* U+21EA ⇪ CAPS LOCK */
 
 static Display *dpy;
 static Window root;
@@ -346,152 +342,6 @@ get_brightness(const char *base, char *buf, size_t size)
     snprintf(buf, size, "%s  %ld%%", ICON_BRIGHTNESS, (long)pct);
 }
 
-static int
-is_temp_input(const char *name)
-{
-    size_t len = strlen(name), i;
-
-    if (len < 11 || strncmp(name, "temp", 4) != 0 ||
-        strcmp(name + len - 6, "_input") != 0)
-        return 0;
-
-    for (i = 4; i < len - 6; i++)
-        if (!isdigit((unsigned char)name[i]))
-            return 0;
-    return 1;
-}
-
-/* Finds tempN_input inside one hwmon directory, preferring temp1. */
-static int
-find_temp_input(const char *dir, char *out, size_t size)
-{
-    DIR *d;
-    struct dirent *e;
-    char path[PATH_MAX];
-
-    if (join_path(path, sizeof(path), dir, "temp1_input") == 0 &&
-        access(path, R_OK) == 0) {
-        snprintf(out, size, "%s", path);
-        return 0;
-    }
-
-    if (!(d = opendir(dir)))
-        return -1;
-
-    while ((e = readdir(d))) {
-        if (strcmp(e->d_name, "temp1_input") == 0)
-            continue;
-        if (!is_temp_input(e->d_name))
-            continue;
-        if (join_path(path, sizeof(path), dir, e->d_name) < 0 ||
-            access(path, R_OK) < 0)
-            continue;
-
-        snprintf(out, size, "%s", path);
-        closedir(d);
-        return 0;
-    }
-    closedir(d);
-    return -1;
-}
-
-/*
- * Locates a temperature sensor without assuming a hwmon number (hwmonN is
- * not stable across boots). Preferred CPU drivers win in the order listed
- * below, then any hwmon sensor, then /sys/class/thermal.
- */
-static int
-find_temperature(char *out, size_t size)
-{
-    static const char *names[] = {
-        "coretemp", "k10temp", "zenpower", "cpu_thermal", "acpitz"
-    };
-    const size_t nnames = sizeof(names) / sizeof(names[0]);
-    DIR *d;
-    struct dirent *e;
-    char dir[PATH_MAX], name[64], tpath[PATH_MAX];
-    char found[PATH_MAX] = "", fallback[PATH_MAX] = "";
-    size_t i, best_prio = nnames;
-
-    if ((d = opendir(HWMONDIR))) {
-        while ((e = readdir(d))) {
-            if (e->d_name[0] == '.')
-                continue;
-            if (join_path(dir, sizeof(dir), HWMONDIR, e->d_name) < 0)
-                continue;
-            if (find_temp_input(dir, tpath, sizeof(tpath)) < 0)
-                continue;
-
-            /* Remember the first sensor as a generic fallback. */
-            if (found[0] == '\0')
-                snprintf(found, sizeof(found), "%s", tpath);
-
-            if (read_attr(dir, "name", name, sizeof(name)) < 0)
-                continue;
-            for (i = 0; i < nnames; i++)
-                if (strcmp(name, names[i]) == 0)
-                    break;
-            if (i < best_prio) {
-                best_prio = i;
-                snprintf(found, sizeof(found), "%s", tpath);
-            }
-        }
-        closedir(d);
-    }
-
-    if (found[0] != '\0') {
-        snprintf(out, size, "%s", found);
-        return 0;
-    }
-
-    if ((d = opendir(THERMALDIR))) {
-        char type[64];
-
-        while ((e = readdir(d))) {
-            if (e->d_name[0] == '.')
-                continue;
-            if (join_path(dir, sizeof(dir), THERMALDIR, e->d_name) < 0)
-                continue;
-            if (join_path(tpath, sizeof(tpath), dir, "temp") < 0 ||
-                access(tpath, R_OK) < 0)
-                continue;
-
-            if (read_attr(dir, "type", type, sizeof(type)) == 0 &&
-                (strstr(type, "x86_pkg") || strstr(type, "cpu"))) {
-                snprintf(out, size, "%s", tpath);
-                closedir(d);
-                return 0;
-            }
-            if (fallback[0] == '\0')
-                snprintf(fallback, sizeof(fallback), "%s", tpath);
-        }
-        closedir(d);
-    }
-
-    if (fallback[0] != '\0') {
-        snprintf(out, size, "%s", fallback);
-        return 0;
-    }
-    return -1;
-}
-
-static void
-get_temperature(const char *path, char *buf, size_t size)
-{
-    long temp;
-
-    buf[0] = '\0';
-    if (path == NULL || path[0] == '\0')
-        return;
-
-    if (read_long_file(path, &temp) < 0)
-        return; /* hide segment if the sensor disappears */
-    if (temp < -100000 || temp > 200000)
-        return;
-
-    snprintf(buf, size, "%s  %ld°C", ICON_TEMP, temp / 1000);
-}
-
 /* Looks up an executable in PATH. 0 on success. */
 static int
 find_program(const char *name, char *out, size_t size)
@@ -697,7 +547,7 @@ get_time(char *buf, size_t size)
         buf[0] = '\0';
 }
 
-/* Caps Lock: shows a lock icon ONLY while Caps Lock is active. */
+/* Caps Lock: shows the caps lock icon ONLY while Caps Lock is active. */
 static void
 get_capslock(char *buf, size_t size)
 {
@@ -736,7 +586,6 @@ append(char *dst, size_t size, size_t len, const char *seg)
 /* Paths are cached and re-discovered periodically to survive hotplug. */
 static char bat_path[PATH_MAX];
 static char bl_path[PATH_MAX];
-static char temp_path[PATH_MAX];
 
 static void
 discover(void)
@@ -745,8 +594,6 @@ discover(void)
         bat_path[0] = '\0';
     if (find_backlight(bl_path, sizeof(bl_path)) < 0)
         bl_path[0] = '\0';
-    if (find_temperature(temp_path, sizeof(temp_path)) < 0)
-        temp_path[0] = '\0';
     if (find_program("wpctl", wpctl_path, sizeof(wpctl_path)) < 0)
         wpctl_path[0] = '\0';
 }
@@ -756,7 +603,7 @@ main(int argc, char *argv[])
 {
     struct sigaction sa;
     char status[512], last_status[512];
-    char caps[32], bri[64], vol[64], bat[64], temp[64], tim[64];
+    char caps[32], bri[64], vol[64], bat[64], tim[64];
     const char *tz;
     long long now, last_sysfs, last_volume, last_discovery;
     int have_last = 0;
@@ -798,7 +645,7 @@ main(int argc, char *argv[])
 
     discover();
 
-    caps[0] = bri[0] = vol[0] = bat[0] = temp[0] = tim[0] = '\0';
+    caps[0] = bri[0] = vol[0] = bat[0] = tim[0] = '\0';
     last_status[0] = '\0';
     last_discovery = now_ms();
     last_sysfs = last_discovery - SYSFS_INTERVAL_MS;
@@ -822,7 +669,6 @@ main(int argc, char *argv[])
         if (now - last_sysfs >= SYSFS_INTERVAL_MS || now < last_sysfs) {
             get_brightness(bl_path, bri, sizeof(bri));
             get_battery(bat_path, bat, sizeof(bat));
-            get_temperature(temp_path, temp, sizeof(temp));
             last_sysfs = now;
         }
 
@@ -841,7 +687,6 @@ main(int argc, char *argv[])
         len = append(status, sizeof(status), len, bri);
         len = append(status, sizeof(status), len, vol);
         len = append(status, sizeof(status), len, bat);
-        len = append(status, sizeof(status), len, temp);
         len = append(status, sizeof(status), len, tim);
 
         /*
