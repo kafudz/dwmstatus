@@ -613,7 +613,7 @@ get_time(char *buf, size_t size)
     if (t == (time_t)-1 || localtime_r(&t, &tmv) == NULL)
         return;
 
-    if (strftime(buf, size, ICON_CLOCK "  %a %d %b %H:%M", &tmv) == 0)
+    if (strftime(buf, size, ICON_CLOCK "  %H:%M", &tmv) == 0)
         buf[0] = '\0';
 }
 
