@@ -166,6 +166,19 @@ now_ms(void)
     return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
+/* Milliseconds left until deadline; clamped to what poll(2) accepts. */
+static int
+time_left_ms(long long deadline)
+{
+    long long left = deadline - now_ms();
+
+    if (left <= 0)
+        return 0;
+    if (left > INT_MAX)
+        return INT_MAX;
+    return (int)left;
+}
+
 /* Signal-safe-ish sleep: wakes early on SIGINT/SIGTERM. */
 static void
 sleep_ms(long ms)
@@ -235,6 +248,7 @@ battery_percent(const char *base)
     static const char *full[] = { "charge_full", "energy_full" };
     static const char *dsgn[] = { "charge_full_design", "energy_full_design" };
     long cap, n, f;
+    long long pct;
     int i;
 
     if (read_long_attr(base, "capacity", &cap) == 0)
@@ -247,9 +261,19 @@ battery_percent(const char *base)
             (read_long_attr(base, dsgn[i], &f) < 0 || f <= 0))
             continue;
 
-        /* 64-bit math: n * 100 can overflow a 32-bit long. */
-        cap = (long)(((long long)n * 100 + f / 2) / f);
-        return cap < 0 ? 0 : cap > 100 ? 100 : (int)cap;
+        /*
+         * 64-bit math: n * 100 can overflow a 32-bit long.  Values that
+         * large are not real batteries; fall back to floating point only
+         * when the exact integer expression would overflow.
+         */
+        if (n >= f)
+            pct = 100;
+        else if (n > (LLONG_MAX - f / 2) / 100)
+            pct = (long long)((long double)n * 100.0L / (long double)f +
+                              0.5L);
+        else
+            pct = ((long long)n * 100 + f / 2) / f;
+        return pct < 0 ? 0 : pct > 100 ? 100 : (int)pct;
     }
     return -1;
 }
@@ -386,14 +410,16 @@ static int
 run_capture(const char *prog, char *const argv[], char *buf, size_t size,
             int timeout_ms)
 {
-    int fds[2], status = -1, timed_out = 0, devnull;
+    int fds[2], status = -1, timed_out = 0, reaped = 0, devnull;
     pid_t pid;
     size_t off = 0;
+    long long deadline;
     struct pollfd pfd;
 
     if (size == 0)
         return -1;
     buf[0] = '\0';
+    deadline = now_ms() + timeout_ms;
 
     if (pipe(fds) < 0)
         return -1;
@@ -433,13 +459,20 @@ run_capture(const char *prog, char *const argv[], char *buf, size_t size,
         char *dst;
         size_t room;
         ssize_t n;
-        int pr;
+        int pr, left;
 
         dst = (off < size - 1) ? buf + off : discard;
         room = (off < size - 1) ? size - 1 - off : sizeof(discard);
 
+        /* Budget is for the whole call, not for each read. */
+        left = time_left_ms(deadline);
+        if (left == 0) {
+            timed_out = 1;
+            break;
+        }
+
         pfd.revents = 0;
-        pr = poll(&pfd, 1, timeout_ms);
+        pr = poll(&pfd, 1, left);
         if (pr < 0) {
             if (errno == EINTR) {
                 if (!running) {
@@ -470,13 +503,50 @@ run_capture(const char *prog, char *const argv[], char *buf, size_t size,
     close(fds[0]);
     buf[off] = '\0';
 
-    if (timed_out)
-        kill(pid, SIGKILL);
+    /*
+     * A child can close stdout and keep running, which looks like EOF here.
+     * Reap it, but not past the deadline, so it cannot freeze the bar either.
+     */
+    while (!reaped && !timed_out) {
+        pid_t w;
 
-    while (waitpid(pid, &status, 0) < 0) {
-        if (errno != EINTR) {
-            status = -1;
+        if (!running) {
+            timed_out = 1;
             break;
+        }
+
+        w = waitpid(pid, &status, WNOHANG);
+        if (w == pid) {
+            reaped = 1;
+            break;
+        }
+        if (w < 0) {
+            if (errno == EINTR)
+                continue;
+            status = -1;
+            reaped = 1;
+            break;
+        }
+
+        {
+            int left = time_left_ms(deadline);
+
+            if (left == 0) {
+                timed_out = 1;
+                break;
+            }
+            poll(NULL, 0, left > 5 ? 5 : left);
+        }
+    }
+
+    if (!reaped) {
+        /* SIGKILL cannot be caught; the blocking reap below is bounded. */
+        kill(pid, SIGKILL);
+        while (waitpid(pid, &status, 0) < 0) {
+            if (errno != EINTR) {
+                status = -1;
+                break;
+            }
         }
     }
 
@@ -516,7 +586,7 @@ get_volume(char *buf, size_t size)
         return;
     }
 
-    if (vol < 0.0)
+    if (!(vol >= 0.0)) /* also catches NaN from a broken wpctl */
         vol = 0.0;
     else if (vol > 10.0) /* sanity clamp before the int cast */
         vol = 10.0;
@@ -565,16 +635,20 @@ append(char *dst, size_t size, size_t len, const char *seg)
 {
     size_t seg_len;
 
+    if (size == 0)
+        return 0;
+    if (len >= size)
+        len = size - 1;
     if (!seg || seg[0] == '\0')
         return len;
 
     seg_len = strlen(seg);
-    if (len > 0 && len + 3 < size) {
+    if (len > 0 && size - len > 3) {
         dst[len++] = ' ';
         dst[len++] = '|';
         dst[len++] = ' ';
     }
-    if (len + seg_len >= size)
+    if (seg_len > size - len - 1)
         seg_len = size - len - 1;
 
     memcpy(dst + len, seg, seg_len);
