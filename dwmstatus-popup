@@ -89,6 +89,9 @@ CSS = """
     padding: 3px 12px;
     min-width: 150px;
 }
+calendar:selected {
+    background-color: #121314;
+}
 """
 
 
