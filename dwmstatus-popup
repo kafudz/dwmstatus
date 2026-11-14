@@ -50,6 +50,9 @@ ICON_CALENDAR = "\uf073"    # nf-fa-calendar
 ICON_CLOCK = "\uf017"       # nf-fa-clock_o
 
 CSS = """
+#dwmstatus-popup {
+    background-color: #101113;
+}
 .dwmstatus-icon {
     font-family: "JetBrainsMono Nerd Font", "Symbols Nerd Font", monospace;
     font-size: 18px;
@@ -129,6 +132,8 @@ def popup(initial):
     Gdk.set_program_class("dwmstatus-popup")
 
     win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+    # Widget name for the background colour in CSS (same as the dwm bar).
+    win.set_name("dwmstatus-popup")
     # Non-empty title: dwm marks clients with an empty name as "broken".
     win.set_title("status")
     win.set_decorated(False)
