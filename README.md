@@ -60,14 +60,17 @@ Bindings without a segment apply to the whole status text.
 `dunstify` / `notify-send`, then falls back to `st`, `dmenu`, or plain text.
 `cal` (util-linux) is required; the display tools are optional.
 
-`dwmstatus-volume` shows an interactive GTK 3 slider and needs Python 3,
-PyGObject and GTK 3 (available in the Arch packages `python`,
-`python-gobject` and `gtk3`). Volume changes go through `wpctl` (PipeWire) or
-`pactl` (PulseAudio); moving the slider while muted also unmutes. Clicking the
-volume segment again closes the open popup. The command line modes `--get`,
-`--set PERCENT`, `--mute`, `--unmute` and `--toggle-mute` work without GTK.
+`dwmstatus-volume` and `dwmstatus-brightness` show interactive GTK 3 sliders;
+both use the shared `dwmstatus-slider` helper and need Python 3, PyGObject and
+GTK 3 (Arch packages `python`, `python-gobject`, `gtk3`). Volume changes go
+through `wpctl` (PipeWire) or `pactl` (PulseAudio); brightness goes through
+`brightnessctl` or a writable sysfs backlight. Moving the volume slider while
+muted also unmutes. Clicking the same segment again closes the open popup.
+The command line modes work without GTK:
+`dwmstatus-volume --get|--set PERCENT|--mute|--unmute|--toggle-mute` and
+`dwmstatus-brightness --get|--set PERCENT`.
 
-Install both helpers with:
+Install the helpers with:
 
 ```bash
 make install
@@ -76,13 +79,15 @@ make install
 Example `config.h`:
 
 ```c
-static const char *calendarcmd[] = { "dwmstatus-calendar", NULL };
-static const char *volumecmd[]   = { "dwmstatus-volume", NULL };
+static const char *calendarcmd[]   = { "dwmstatus-calendar", NULL };
+static const char *volumecmd[]     = { "dwmstatus-volume", NULL };
+static const char *brightnesscmd[] = { "dwmstatus-brightness", NULL };
 
 static const Button buttons[] = {
 	/* ... */
-	{ ClkStatusText, 0, Button1, spawn, {.v = calendarcmd }, "tim" },
-	{ ClkStatusText, 0, Button1, spawn, {.v = volumecmd },  "vol" },
+	{ ClkStatusText, 0, Button1, spawn, {.v = calendarcmd },   "tim" },
+	{ ClkStatusText, 0, Button1, spawn, {.v = volumecmd },     "vol" },
+	{ ClkStatusText, 0, Button1, spawn, {.v = brightnesscmd }, "bri" },
 	{ ClkStatusText, 0, Button3, spawn, {.v = termcmd } },
 	/* ... */
 };

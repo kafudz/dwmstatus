@@ -1,0 +1,403 @@
+#!/usr/bin/env python3
+"""dwmstatus-slider - volume and brightness slider popup for dwm's bar.
+
+Usage:
+  dwmstatus-slider volume [--get | --set PERCENT | --mute | --unmute |
+                           --toggle-mute]
+  dwmstatus-slider brightness [--get | --set PERCENT]
+
+Without a command it shows a slider under the pointer.  The
+dwmstatus-volume and dwmstatus-brightness wrappers select the control, so
+dwm can spawn them directly from its config.h.
+
+Volume uses wpctl (PipeWire) or pactl (PulseAudio); brightness uses
+brightnessctl or a writable sysfs backlight.  The slider needs GTK 3 and
+PyGObject; the command line modes do not.
+"""
+
+import fcntl
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+
+SINK = "@DEFAULT_AUDIO_SINK@"
+PULSE_SINK = "@DEFAULT_SINK@"
+BLDIR = "/sys/class/backlight"
+DEVNULL = subprocess.DEVNULL
+
+
+def run(args):
+    try:
+        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=DEVNULL,
+                                text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout
+
+
+# --- volume ---------------------------------------------------------------
+
+def detect_volume():
+    if shutil.which("wpctl"):
+        return "wpctl"
+    if shutil.which("pactl"):
+        return "pactl"
+    return None
+
+
+def volume_state(backend):
+    """Return (percent, muted), or None when the backend cannot be queried."""
+    if backend == "wpctl":
+        out = run(["wpctl", "get-volume", SINK])
+        match = re.search(r"Volume:\s*([0-9.]+)", out)
+        if not match:
+            return None
+        return (round(float(match.group(1)) * 100), "[MUTED]" in out)
+
+    out = run(["pactl", "get-sink-volume", PULSE_SINK])
+    match = re.search(r"(\d+)%", out)
+    if not match:
+        return None
+    muted = "yes" in run(["pactl", "get-sink-mute", PULSE_SINK]).lower()
+    return (int(match.group(1)), muted)
+
+
+def set_volume(backend, percent):
+    percent = max(0, min(100, int(percent)))
+    if backend == "wpctl":
+        args = ["wpctl", "set-volume", SINK, f"{percent}%"]
+    else:
+        args = ["pactl", "set-sink-volume", PULSE_SINK, f"{percent}%"]
+    result = subprocess.run(args, stdout=DEVNULL, stderr=DEVNULL, check=False)
+    return result.returncode == 0
+
+
+def set_mute(backend, muted):
+    if backend == "wpctl":
+        args = ["wpctl", "set-mute", SINK, "1" if muted else "0"]
+    else:
+        args = ["pactl", "set-sink-mute", PULSE_SINK, "1" if muted else "0"]
+    result = subprocess.run(args, stdout=DEVNULL, stderr=DEVNULL, check=False)
+    return result.returncode == 0
+
+
+# --- brightness -----------------------------------------------------------
+
+def backlight_dir():
+    try:
+        names = os.listdir(BLDIR)
+    except OSError:
+        return None
+    for name in sorted(names):
+        path = os.path.join(BLDIR, name)
+        if os.access(os.path.join(path, "brightness"), os.R_OK):
+            return path
+    return None
+
+
+def sysfs_state():
+    path = backlight_dir()
+    if path is None:
+        return None
+    try:
+        with open(os.path.join(path, "brightness")) as handle:
+            current = int(handle.read().strip())
+        with open(os.path.join(path, "max_brightness")) as handle:
+            maximum = int(handle.read().strip())
+    except (OSError, ValueError):
+        return None
+    if maximum <= 0:
+        return None
+    return max(0, min(100, int(current * 100 / maximum + 0.5)))
+
+
+def sysfs_set(percent):
+    path = backlight_dir()
+    if path is None:
+        return False
+    try:
+        with open(os.path.join(path, "max_brightness")) as handle:
+            maximum = int(handle.read().strip())
+        if maximum <= 0:
+            return False
+        # Never write raw 0: on many panels that switches the backlight off.
+        raw = max(1, int(percent * maximum / 100 + 0.5))
+        with open(os.path.join(path, "brightness"), "w") as handle:
+            handle.write(str(raw))
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def detect_brightness():
+    if shutil.which("brightnessctl"):
+        return "brightnessctl"
+    if backlight_dir() is not None:
+        return "sysfs"
+    return None
+
+
+def brightness_state(backend):
+    """Return (percent, None), or None when the backend cannot be queried."""
+    if backend == "brightnessctl":
+        out = run(["brightnessctl", "-m", "-c", "backlight"])
+        for line in out.splitlines():
+            fields = line.split(",")
+            if len(fields) >= 4:
+                match = re.fullmatch(r"(\d+)%", fields[3].strip())
+                if match:
+                    return (int(match.group(1)), None)
+    percent = sysfs_state()
+    return None if percent is None else (percent, None)
+
+
+def set_brightness(backend, percent):
+    percent = max(0, min(100, int(percent)))
+    if backend == "brightnessctl":
+        result = subprocess.run(
+            ["brightnessctl", "-q", "-c", "backlight", "set", f"{percent}%"],
+            stdout=DEVNULL, stderr=DEVNULL, check=False)
+        if result.returncode == 0:
+            return True
+    return sysfs_set(percent)
+
+
+# --- popup ----------------------------------------------------------------
+
+def popup_lock(control):
+    """Claim the per-control single-instance lock.
+
+    Returns an open file descriptor that holds the lock, or None when another
+    popup is already open.  A second click on the same segment then closes the
+    open popup instead of stacking a new one.
+    """
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+    path = os.path.join(runtime,
+                        f"dwmstatus-slider-{control}-{os.getuid()}.lock")
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            pid = int(os.read(fd, 32).decode().strip())
+            if pid > 1:
+                os.kill(pid, signal.SIGTERM)
+        except (OSError, ValueError):
+            pass
+        os.close(fd)
+        return None
+    os.ftruncate(fd, 0)
+    os.write(fd, str(os.getpid()).encode())
+    return fd
+
+
+def popup(control, backend):
+    lock = popup_lock(control)
+    if lock is None:
+        return 0
+
+    try:
+        import gi
+        gi.require_version("Gdk", "3.0")
+        gi.require_version("Gtk", "3.0")
+        from gi.repository import Gdk, GLib, Gtk
+    except (ImportError, ValueError) as error:
+        print(f"dwmstatus-slider: GTK 3 / PyGObject unavailable: {error}",
+              file=sys.stderr)
+        return 1
+
+    state = volume_state(backend) if control == "volume" \
+        else brightness_state(backend)
+    if state is None:
+        print(f"dwmstatus-slider: cannot read the current {control}",
+              file=sys.stderr)
+        return 1
+    percent, muted = state
+    title_text = "Volume" if control == "volume" else "Brightness"
+
+    GLib.set_prgname(f"dwmstatus-{control}")
+    Gdk.set_program_class(f"dwmstatus-{control}")
+
+    win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+    win.set_title(title_text)
+    win.set_decorated(False)
+    win.set_resizable(False)
+    win.set_border_width(12)
+    win.set_skip_taskbar_hint(True)
+    win.set_skip_pager_hint(True)
+    win.set_keep_above(True)
+    win.set_type_hint(Gdk.WindowTypeHint.DIALOG)
+
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+
+    header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+    title = Gtk.Label(label=title_text, xalign=0)
+    value = Gtk.Label(label=f"{percent}%", xalign=1)
+    header.pack_start(title, True, True, 0)
+    header.pack_end(value, False, False, 0)
+
+    scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+    scale.set_draw_value(False)
+    scale.set_value(percent)
+    scale.set_size_request(240, -1)
+
+    box.pack_start(header, False, False, 0)
+    box.pack_start(scale, False, False, 0)
+
+    muted_now = [bool(muted)]
+    mute = None
+    if control == "volume":
+        mute = Gtk.Button(label="Unmute" if muted_now[0] else "Mute")
+        box.pack_start(mute, False, False, 0)
+
+    win.add(box)
+
+    pending = [0]
+    shown_at = [0]
+
+    def apply_change():
+        pending[0] = 0
+        level = int(round(scale.get_value()))
+        if control == "volume":
+            if muted_now[0]:
+                set_mute(backend, False)
+                muted_now[0] = False
+                mute.set_label("Mute")
+            set_volume(backend, level)
+        else:
+            set_brightness(backend, level)
+        value.set_text(f"{level}%")
+        return False
+
+    def on_value_changed(widget):
+        value.set_text(f"{int(round(widget.get_value()))}%")
+        if pending[0]:
+            GLib.source_remove(pending[0])
+        # Coalesce drag events: one command per pause, not per pixel.
+        pending[0] = GLib.timeout_add(60, apply_change)
+
+    def on_mute_clicked(button):
+        muted_now[0] = not muted_now[0]
+        set_mute(backend, muted_now[0])
+        button.set_label("Unmute" if muted_now[0] else "Mute")
+
+    def on_key_press(widget, event):
+        if event.keyval in (Gdk.KEY_Escape, Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            win.destroy()
+            return True
+        return False
+
+    def on_focus_out(widget, event):
+        # Ignore the focus transition caused by mapping the popup itself.
+        if GLib.get_monotonic_time() - shown_at[0] > 200000:
+            win.destroy()
+        return False
+
+    scale.connect("value-changed", on_value_changed)
+    if mute is not None:
+        mute.connect("clicked", on_mute_clicked)
+    win.connect("key-press-event", on_key_press)
+    win.connect("focus-out-event", on_focus_out)
+    win.connect("destroy", Gtk.main_quit)
+
+    win.show_all()
+    win.present()
+
+    # Place the popup under the click, on the monitor that owns the pointer.
+    display = Gdk.Display.get_default()
+    seat = display.get_default_seat()
+    pointer = seat.get_pointer()
+    _, px, py = pointer.get_position()
+    monitor = display.get_monitor_at_point(px, py) or display.get_primary_monitor()
+    if monitor is not None:
+        geometry = monitor.get_geometry()
+        width, height = win.get_size()
+        x = min(max(px - width // 2, geometry.x + 8),
+                geometry.x + geometry.width - width - 8)
+        y = py + 24
+        if y + height > geometry.y + geometry.height - 8:
+            y = geometry.y + geometry.height - height - 8
+        win.move(x, y)
+
+    shown_at[0] = GLib.get_monotonic_time()
+    Gtk.main()
+    return 0
+
+
+# --- command line ---------------------------------------------------------
+
+def usage(stream=sys.stderr):
+    print("usage: dwmstatus-slider volume "
+          "[--get | --set PERCENT | --mute | --unmute | --toggle-mute]\n"
+          "       dwmstatus-slider brightness [--get | --set PERCENT]",
+          file=stream)
+    return 2
+
+
+def main():
+    if len(sys.argv) < 2:
+        return usage()
+
+    control = sys.argv[1]
+    if control == "volume":
+        backend = detect_volume()
+    elif control == "brightness":
+        backend = detect_brightness()
+    else:
+        return usage()
+
+    if backend is None:
+        print(f"dwmstatus-slider: no {control} backend found", file=sys.stderr)
+        return 1
+
+    argv = sys.argv[2:]
+    if not argv:
+        return popup(control, backend)
+
+    command = argv[0]
+    if command in ("-h", "--help"):
+        usage(sys.stdout)
+        return 0
+    if command in ("-g", "--get"):
+        state = volume_state(backend) if control == "volume" \
+            else brightness_state(backend)
+        if state is None:
+            print(f"dwmstatus-slider: cannot read the current {control}",
+                  file=sys.stderr)
+            return 1
+        if control == "volume" and state[1]:
+            print("muted")
+        else:
+            print(state[0])
+        return 0
+    if command in ("-s", "--set"):
+        if len(argv) != 2 or not argv[1].lstrip("+-").isdigit():
+            return usage()
+        if control == "volume":
+            ok = set_volume(backend, argv[1])
+        else:
+            ok = set_brightness(backend, argv[1])
+        return 0 if ok else 1
+    if command in ("-m", "--mute", "-u", "--unmute", "--toggle-mute"):
+        if control != "volume":
+            return usage()
+        if command in ("-m", "--mute"):
+            ok = set_mute(backend, True)
+        elif command in ("-u", "--unmute"):
+            ok = set_mute(backend, False)
+        else:
+            state = volume_state(backend)
+            if state is None:
+                return 1
+            ok = set_mute(backend, not state[1])
+        return 0 if ok else 1
+
+    return usage()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -45,33 +45,42 @@ atau
 Skrip ini dipanggil oleh
 .BR dwm (1)
 melalui pengikatan tombol pada teks status; lihat README untuk contoh.
-.SH VOLUME
+.SH SLIDER
 Skrip
 .B dwmstatus-volume
-menampilkan slider volume GTK 3 di bawah kursor.
-Perubahan dikirim ke sink audio default melalui
+dan
+.B dwmstatus-brightness
+menampilkan slider GTK 3 di bawah kursor untuk volume dan kecerahan.
+Keduanya memakai skrip bersama
+.BR dwmstatus-slider .
+Perubahan volume dikirim ke sink audio default melalui
 .BR wpctl (1)
 atau
 .BR pactl (1);
-menggeser slider saat mute juga membatalkan mute.
-Klik lagi pada bagian volume menutup popup.
+menggeser slider volume saat mute juga membatalkan mute.
+Kecerahan diubah melalui
+.BR brightnessctl (1)
+atau langsung ke sysfs backlight yang dapat ditulis.
+Klik lagi pada bagian yang sama menutup popup.
 Mode baris perintah
-.BR \-\-get ,
-.BR \-\-set " PERCENT" ,
+.BR \-\-get " dan " \-\-set " PERCENT"
+tersedia untuk keduanya;
 .BR \-\-mute ,
 .BR \-\-unmute ,
 dan
 .B \-\-toggle-mute
-bekerja tanpa GTK.
+hanya untuk volume.
+Semua mode baris perintah bekerja tanpa GTK.
 Skrip ini dipanggil oleh
 .BR dwm (1)
-melalui pengikatan tombol pada bagian volume teks status.
+melalui pengikatan tombol pada bagian teks status.
 .SH SIGNALS
 .B SIGINT
 dan
 .B SIGTERM
 menghentikan dwmstatus dengan bersih.
 .SH SEE ALSO
+.BR brightnessctl (1),
 .BR cal (1),
 .BR dwm (1),
 .BR pactl (1),

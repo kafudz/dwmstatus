@@ -1,0 +1,5 @@
+#!/bin/sh
+# Brightness slider for dwm's status bar (see dwmstatus-slider).
+dir=${0%/*}
+[ "$dir" = "$0" ] && dir=.
+exec "$dir/dwmstatus-slider" brightness "$@"
