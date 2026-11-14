@@ -14,15 +14,15 @@ Feel free to read/copy it, but expect to edit the source for your own system.
 ## What it shows
 
 The bar shows Nerd Font icons only, left to right: Caps Lock (only while
-active), brightness, volume, battery and clock. The icons are separated by
-invisible spacing (no `|` pipes). Percentages and the clock digits are shown in
+active), volume and battery. The icons are separated by invisible spacing (no
+`|` pipes). Percentages, the brightness slider and the clock digits are shown in
 the combined popup described under [Click actions](#click-actions). The popup
 clock uses `DWMSTATUS_TZ` (default `Asia/Jakarta`).
 
 The root window name is only rewritten when the status actually changes, so dwm
 does not redraw its bar on every poll. Caps Lock is checked every 0.5 s,
-brightness/battery every 1 s, volume every 2 s, and sysfs devices are re-scanned
-every 30 s so hotplug still works.
+battery every 1 s, volume every 2 s, and sysfs devices are re-scanned every 30 s
+so hotplug still works.
 
 Uses Nerd Font icons. Make sure your dwm font supports them.
 
@@ -50,12 +50,12 @@ dwmstatus &
 
 dwm draws the bar and receives the clicks, so click bindings live in dwm's
 `config.h`. `dwmstatus` publishes the visible segment names in the
-`_DWMSTATUS_SEGMENTS` root window property (`caps,bri,vol,bat,tim`); the dwm
-patch in this setup maps a click to the segment under the pointer.
+`_DWMSTATUS_SEGMENTS` root window property (`caps,vol,bat`); the dwm patch in
+this setup maps a click to the segment under the pointer.
 
 Clicking an icon opens one combined GTK 3 popup, `dwmstatus-popup`, focused on
-the matching section: brightness, volume, battery, or the calendar/clock. The
-Caps Lock icon also opens the clock section. The popup always appears at a fixed
+the matching section: volume, battery, or the clock/calendar (via Caps Lock).
+The popup always appears at a fixed
 position: 40 px from the top and 15 px from the right edge of the monitor. Its
 window title is `status`, so dwm's title area does not mark the popup as
 `broken` while it is open.
@@ -90,16 +90,13 @@ make install
 Example `config.h`:
 
 ```c
-static const char *popupbricmd[] = { "dwmstatus-popup", "bri", NULL };
 static const char *popupvolcmd[] = { "dwmstatus-popup", "vol", NULL };
 static const char *popupbatcmd[] = { "dwmstatus-popup", "bat", NULL };
 static const char *popuptimcmd[] = { "dwmstatus-popup", "tim", NULL };
 
 static const Button buttons[] = {
 	/* ... */
-	{ ClkStatusText, 0, Button1, spawn, {.v = popuptimcmd }, "tim" },
 	{ ClkStatusText, 0, Button1, spawn, {.v = popupvolcmd }, "vol" },
-	{ ClkStatusText, 0, Button1, spawn, {.v = popupbricmd }, "bri" },
 	{ ClkStatusText, 0, Button1, spawn, {.v = popupbatcmd }, "bat" },
 	{ ClkStatusText, 0, Button1, spawn, {.v = popuptimcmd }, "caps" },
 	{ ClkStatusText, 0, Button3, spawn, {.v = termcmd } },
@@ -107,8 +104,8 @@ static const Button buttons[] = {
 };
 ```
 
-The optional last field is the segment name (`caps`, `bri`, `vol`, `bat`,
-`tim`). Leaving it out means "the whole status text"; a segment binding wins
-over a generic one. Stock dwm does not have this field or the
-`_DWMSTATUS_SEGMENTS` lookup, so the small patch to `buttonpress()` and the
-`Button` struct is required for segment clicks.
+The optional last field is the bar segment name (`caps`, `vol`, `bat`).
+Leaving it out means "the whole status text"; a segment binding wins over a
+generic one. Stock dwm does not have this field or the `_DWMSTATUS_SEGMENTS`
+lookup, so the small patch to `buttonpress()` and the `Button` struct is
+required for segment clicks.

@@ -2,11 +2,11 @@
 dwmstatus - status bar for dwm (based on 20h's dwmstatus)
 Requires a Nerd Font in dwm's config.h, e.g.
 static const char *fonts[] = { "JetBrainsMono Nerd Font:size=10" };
-Shows Nerd Font icons only, in this order: Caps Lock (while active),
-brightness, volume, battery and clock. Percentages and the clock digits live
-in the combined popup (dwmstatus-popup).
+Shows Nerd Font icons only, in this order: Caps Lock (while active), volume
+and battery. Percentages and the clock digits live in the combined popup
+(dwmstatus-popup).
 Optional runtime tool: wpctl (PipeWire) for volume.
-Brightness and battery are read straight from sysfs (no subprocess).
+Battery is read straight from sysfs (no subprocess).
 Segments that are not available on the machine are hidden.
 The root window name is only updated when the status actually changes, so dwm
 does not redraw its bar twice per second for an identical string.
@@ -41,16 +41,14 @@ Build: gcc -O2 -Wall -o dwmstatus dwmstatus.c -lX11
  * even quieter; it costs one wpctl process per update.
  */
 #define UPDATE_INTERVAL_MS     500   /* Caps Lock */
-#define SYSFS_INTERVAL_MS     1000   /* brightness and battery */
+#define SYSFS_INTERVAL_MS     1000   /* battery */
 #define VOLUME_INTERVAL_MS    2000   /* spawning wpctl is the expensive part */
 #define VOLUME_TIMEOUT_MS      200   /* do not let a stuck wpctl freeze us */
 #define DISCOVERY_INTERVAL_MS 30000  /* re-scan sysfs for hotplugged devices */
 
 #define PSDIR "/sys/class/power_supply"
-#define BLDIR "/sys/class/backlight"
 
 /* Nerd Font icons as UTF-8 byte sequences */
-#define ICON_BRIGHTNESS   "\xef\x86\x85"  /* U+F185 nf-fa-sun_o */
 #define ICON_VOL_OFF      "\xef\x80\xa6"  /* U+F026 nf-fa-volume_off */
 #define ICON_VOL_LOW      "\xef\x80\xa7"  /* U+F027 nf-fa-volume_down */
 #define ICON_VOL_HIGH     "\xef\x80\xa8"  /* U+F028 nf-fa-volume_up */
@@ -60,7 +58,6 @@ Build: gcc -O2 -Wall -o dwmstatus dwmstatus.c -lX11
 #define ICON_BAT_1Q       "\xef\x89\x83"  /* U+F243 nf-fa-battery_quarter */
 #define ICON_BAT_EMPTY    "\xef\x89\x84"  /* U+F244 nf-fa-battery_empty */
 #define ICON_BOLT         "\xef\x83\xa7"  /* U+F0E7 nf-fa-bolt */
-#define ICON_CLOCK        "\xef\x80\x97"  /* U+F017 nf-fa-clock_o */
 #define ICON_CAPS_ON      "\xe2\x87\xaa"  /* U+21EA ⇪ CAPS LOCK */
 
 static Display *dpy;
@@ -323,56 +320,6 @@ get_battery(const char *base, char *buf, size_t size)
     snprintf(buf, size, "%s%s", charging ? ICON_BOLT "  " : "", icon);
 }
 
-/* First usable backlight device in sysfs. 0 on success. */
-static int
-find_backlight(char *out, size_t size)
-{
-    DIR *d;
-    struct dirent *e;
-    char dir[PATH_MAX], path[PATH_MAX];
-
-    if (!(d = opendir(BLDIR)))
-        return -1;
-
-    while ((e = readdir(d))) {
-        if (e->d_name[0] == '.')
-            continue;
-        if (join_path(dir, sizeof(dir), BLDIR, e->d_name) < 0)
-            continue;
-
-        /* Ignore entries that are not actual backlight devices. */
-        if (join_path(path, sizeof(path), dir, "brightness") < 0 ||
-            access(path, R_OK) < 0)
-            continue;
-        if (join_path(path, sizeof(path), dir, "max_brightness") < 0 ||
-            access(path, R_OK) < 0)
-            continue;
-
-        snprintf(out, size, "%s", dir);
-        closedir(d);
-        return 0;
-    }
-    closedir(d);
-    return -1;
-}
-
-static void
-get_brightness(const char *base, char *buf, size_t size)
-{
-    long cur, max;
-
-    buf[0] = '\0';
-    if (base == NULL || base[0] == '\0')
-        return;
-
-    if (read_long_attr(base, "brightness", &cur) < 0 ||
-        read_long_attr(base, "max_brightness", &max) < 0 || max <= 0)
-        return;
-
-    /* Icon only; the percentage is shown in dwmstatus-popup. */
-    snprintf(buf, size, "%s", ICON_BRIGHTNESS);
-}
-
 /* Looks up an executable in PATH. 0 on success. */
 static int
 find_program(const char *name, char *out, size_t size)
@@ -610,13 +557,6 @@ get_volume(char *buf, size_t size)
     snprintf(buf, size, "%s", icon);
 }
 
-static void
-get_time(char *buf, size_t size)
-{
-    /* Digits live in the popup; the bar only shows the clock icon. */
-    snprintf(buf, size, "%s", ICON_CLOCK);
-}
-
 /* Caps Lock: shows the caps lock icon ONLY while Caps Lock is active. */
 static void
 get_capslock(char *buf, size_t size)
@@ -662,7 +602,7 @@ append(char *dst, size_t size, size_t len, const char *seg)
 /*
  * Companion to append(): record the name of a segment that was actually
  * added to the status text. Names are comma separated and follow the visual
- * order of the segments ("caps,bri,vol,bat,tim").
+ * order of the segments ("caps,vol,bat").
  */
 static size_t
 appendseg(char *dst, size_t size, size_t len, const char *name,
@@ -688,15 +628,12 @@ appendseg(char *dst, size_t size, size_t len, const char *name,
 
 /* Paths are cached and re-discovered periodically to survive hotplug. */
 static char bat_path[PATH_MAX];
-static char bl_path[PATH_MAX];
 
 static void
 discover(void)
 {
     if (find_battery(bat_path, sizeof(bat_path)) < 0)
         bat_path[0] = '\0';
-    if (find_backlight(bl_path, sizeof(bl_path)) < 0)
-        bl_path[0] = '\0';
     if (find_program("wpctl", wpctl_path, sizeof(wpctl_path)) < 0)
         wpctl_path[0] = '\0';
 }
@@ -706,7 +643,7 @@ main(int argc, char *argv[])
 {
     struct sigaction sa;
     char status[512], last_status[512];
-    char caps[32], bri[64], vol[64], bat[64], tim[64];
+    char caps[32], vol[64], bat[64];
     char segs[64];
     long long now, last_sysfs, last_volume, last_discovery;
     int have_last = 0;
@@ -743,7 +680,7 @@ main(int argc, char *argv[])
 
     discover();
 
-    caps[0] = bri[0] = vol[0] = bat[0] = tim[0] = '\0';
+    caps[0] = vol[0] = bat[0] = '\0';
     last_status[0] = '\0';
     last_discovery = now_ms();
     last_sysfs = last_discovery - SYSFS_INTERVAL_MS;
@@ -765,7 +702,6 @@ main(int argc, char *argv[])
         get_capslock(caps, sizeof(caps));
 
         if (now - last_sysfs >= SYSFS_INTERVAL_MS || now < last_sysfs) {
-            get_brightness(bl_path, bri, sizeof(bri));
             get_battery(bat_path, bat, sizeof(bat));
             last_sysfs = now;
         }
@@ -776,24 +712,18 @@ main(int argc, char *argv[])
             last_volume = now;
         }
 
-        get_time(tim, sizeof(tim));
-
         len = 0;
         status[0] = '\0';
         segs[0] = '\0';
 
         len = append(status, sizeof(status), len, caps);
-        len = append(status, sizeof(status), len, bri);
         len = append(status, sizeof(status), len, vol);
         len = append(status, sizeof(status), len, bat);
-        len = append(status, sizeof(status), len, tim);
 
         len = 0;
         len = appendseg(segs, sizeof(segs), len, "caps", caps);
-        len = appendseg(segs, sizeof(segs), len, "bri", bri);
         len = appendseg(segs, sizeof(segs), len, "vol", vol);
         len = appendseg(segs, sizeof(segs), len, "bat", bat);
-        len = appendseg(segs, sizeof(segs), len, "tim", tim);
 
         /*
          * Only touch the root window name when something changed. Setting
