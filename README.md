@@ -13,20 +13,14 @@ Feel free to read/copy it, but expect to edit the source for your own system.
 
 ## What it shows
 
-Segments are shown left to right; any segment that is not available is hidden.
+The bar has a single segment: the clock (timezone defaults to `Asia/Jakarta`;
+override with `DWMSTATUS_TZ`). Brightness, volume, battery and the calendar are
+available in the combined popup described under [Click actions](#click-actions).
 
-- Caps Lock state (icon only while active)
-- Brightness (from `/sys/class/backlight`)
-- Volume (via `wpctl`; hidden if unavailable)
-- Battery (from `/sys/class/power_supply`)
-- Clock (timezone defaults to `Asia/Jakarta`; override with `DWMSTATUS_TZ`)
+The root window name is only rewritten when the time actually changes, so dwm
+does not redraw its bar on every poll. The clock is checked every 0.5 s.
 
-The root window name is only rewritten when the status actually changes, so dwm
-does not redraw its bar on every poll. Caps Lock and the clock are checked every
-0.5 s, battery/brightness every 1 s, volume every 2 s, and sysfs devices are
-re-scanned every 30 s so hotplug still works.
-
-Uses Nerd Font icons. Make sure your dwm font supports them.
+Uses a Nerd Font icon. Make sure your dwm font supports it.
 
 ## Build
 
@@ -51,20 +45,19 @@ dwmstatus &
 ## Click actions
 
 dwm draws the bar and receives the clicks, so click bindings live in dwm's
-`config.h`. `dwmstatus` publishes the name of every visible segment in the
-`_DWMSTATUS_SEGMENTS` root window property (for example `bri,vol,bat,tim`);
-the dwm patch in this setup maps a click to the segment under the pointer.
-Bindings without a segment apply to the whole status text.
+`config.h`. `dwmstatus` publishes the visible segment name in the
+`_DWMSTATUS_SEGMENTS` root window property (now just `tim`); the dwm patch in
+this setup maps a click to the segment under the pointer. Bindings without a
+segment apply to the whole status text.
 
-Clicking the brightness, volume, battery or clock segment opens one combined
-GTK 3 popup, `dwmstatus-popup`, under the pointer. It contains a brightness
-slider, a volume slider with a mute button, a read-only battery level bar with
-its charging state, and a calendar. Each section is labelled with a Nerd Font
-icon (sun, volume, battery, calendar); the volume and battery icons follow the
-level, a bolt appears while charging, and the clicked section receives keyboard
-focus. Clicking any of those segments again closes the popup, as do
-`Esc`, `Return` and clicking elsewhere. Sections without a working backend are
-hidden, and the calendar is always available.
+Clicking the clock opens one combined GTK 3 popup, `dwmstatus-popup`, under the
+pointer. It contains a brightness slider, a volume slider with a mute button, a
+read-only battery level bar with its charging state, and a calendar. Each
+section is labelled with a Nerd Font icon (sun, volume, battery, calendar); the
+volume and battery icons follow the level, a bolt appears while charging, and
+the calendar receives keyboard focus. Clicking the clock again closes the
+popup, as do `Esc`, `Return` and clicking elsewhere. Sections without a working
+backend are hidden, and the calendar is always available.
 
 The popup needs Python 3, PyGObject and GTK 3 (Arch packages `python`,
 `python-gobject`, `gtk3`). Volume changes go through `wpctl` (PipeWire) or
@@ -87,24 +80,18 @@ make install
 Example `config.h`:
 
 ```c
-static const char *popuptimcmd[] = { "dwmstatus-popup", "tim", NULL };
-static const char *popupvolcmd[] = { "dwmstatus-popup", "vol", NULL };
-static const char *popupbricmd[] = { "dwmstatus-popup", "bri", NULL };
-static const char *popupbatcmd[] = { "dwmstatus-popup", "bat", NULL };
+static const char *popupcmd[] = { "dwmstatus-popup", "tim", NULL };
 
 static const Button buttons[] = {
 	/* ... */
-	{ ClkStatusText, 0, Button1, spawn, {.v = popuptimcmd }, "tim" },
-	{ ClkStatusText, 0, Button1, spawn, {.v = popupvolcmd }, "vol" },
-	{ ClkStatusText, 0, Button1, spawn, {.v = popupbricmd }, "bri" },
-	{ ClkStatusText, 0, Button1, spawn, {.v = popupbatcmd }, "bat" },
+	{ ClkStatusText, 0, Button1, spawn, {.v = popupcmd }, "tim" },
 	{ ClkStatusText, 0, Button3, spawn, {.v = termcmd } },
 	/* ... */
 };
 ```
 
-The last field is the segment name: `caps`, `bri`, `vol`, `bat` or `tim`.
-Leaving it out means "the whole status text"; a segment binding wins over a
-generic one. Stock dwm does not have this field or the `_DWMSTATUS_SEGMENTS`
-lookup, so the small patch to `buttonpress()` and the `Button` struct is
-required for per-segment clicks.
+The last field is the segment name; `tim` matches the only segment `dwmstatus`
+publishes. Leaving it out means "the whole status text"; a segment binding wins
+over a generic one. Stock dwm does not have this field or the
+`_DWMSTATUS_SEGMENTS` lookup, so the small patch to `buttonpress()` and the
+`Button` struct is required for segment clicks.
