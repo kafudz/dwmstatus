@@ -48,10 +48,6 @@ CSS = """
 .dwmstatus-title {
     font-weight: bold;
 }
-.dwmstatus-active {
-    background-color: rgba(53, 132, 228, 0.18);
-    border-radius: 8px;
-}
 .dwmstatus-level trough {
     min-height: 6px;
     border-radius: 3px;
@@ -353,12 +349,10 @@ def popup(initial):
             y = geometry.y + geometry.height - height - 8
         win.move(x, y)
 
-    # Emphasise and focus the section the clicked segment belongs to.  This
-    # has to happen after present(), otherwise the window focus chain wins.
+    # Focus the section the clicked segment belongs to (no visual highlight).
+    # This has to happen after present(), otherwise the window focus chain wins.
     if initial in sections:
-        box, widget = sections[initial]
-        box.get_style_context().add_class("dwmstatus-active")
-        widget.grab_focus()
+        sections[initial][1].grab_focus()
     elif sections:
         next(iter(sections.values()))[1].grab_focus()
 
