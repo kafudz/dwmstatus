@@ -8,22 +8,27 @@ dwmstatus \- status bar untuk dynamic window manager (dwm)
 .B dwmstatus
 adalah aplikasi status bar ringan yang berjalan di latar belakang untuk memperbarui nama jendela utama (root window name) pada sistem X11, yang digunakan oleh dwm untuk menampilkan status sistem.
 .P
-Bar menampilkan indikator Caps Lock (hanya saat aktif) dan waktu.
-Kecerahan, volume, baterai, dan kalender tersedia di popup gabungan
+Bar menampilkan ikon Nerd Font saja, dari kiri ke kanan: Caps Lock (hanya saat
+aktif), kecerahan, volume, baterai, dan jam. Persentase dan digit jam
+ditampilkan di popup gabungan
 .BR dwmstatus-popup .
 .P
 Nama jendela utama hanya diperbarui saat status berubah, sehingga dwm tidak
-menggambar ulang bar setiap kali polling. Caps Lock dan waktu diperiksa setiap
-0,5 detik.
+menggambar ulang bar setiap kali polling. Caps Lock diperiksa setiap 0,5 detik,
+kecerahan/baterai setiap 1 detik, volume setiap 2 detik, dan perangkat sysfs
+dipindai ulang setiap 30 detik agar hotplug tetap terdeteksi.
 .P
 .B dwmstatus
 juga menulis nama bagian yang sedang tampil, yaitu
-.I caps
+.IR caps ,
+.IR bri ,
+.IR vol ,
+.IR bat ,
 dan
 .IR tim ,
 ke properti
 .I _DWMSTATUS_SEGMENTS
-pada root window, sehingga dwm dapat membuka popup gabungan saat teks status
+pada root window, sehingga dwm dapat membuka popup gabungan saat ikon status
 diklik.
 .P
 Diperlukan Nerd Font pada dwm agar ikon tampil.
@@ -34,17 +39,18 @@ Cetak versi lalu keluar.
 .SH ENVIRONMENT
 .TP
 .B DWMSTATUS_TZ
-Zona waktu yang dipakai untuk jam (default: Asia/Jakarta).
+Zona waktu yang dipakai untuk digit jam di popup (default: Asia/Jakarta).
 .SH POPUP
 Skrip
 .B dwmstatus-popup
 menampilkan satu popup GTK 3 gabungan: slider kecerahan, slider volume dengan
-tombol mute, indikator level baterai beserta status pengisiannya, dan kalender.
-Popup selalu muncul di posisi tetap, yaitu sudut kanan atas monitor tepat di
-bawah bar.
+tombol mute, indikator level baterai beserta status pengisiannya, dan kalender
+yang judulnya menampilkan jam serta tanggal terpilih.
+Popup selalu muncul di posisi tetap, yaitu 40 piksel dari atas dan 10 piksel
+dari tepi kanan monitor.
 Argumen opsional
 .BR bri ", " vol ", " bat " atau " tim
-memfokuskan bagian yang sesuai dengan indikator yang diklik.
+memfokuskan bagian yang sesuai dengan ikon yang diklik.
 Setiap bagian diberi ikon Nerd Font: matahari untuk kecerahan, ikon volume
 yang mengikuti level, ikon baterai yang mengikuti sisa daya (dengan ikon
 petir saat mengisi), dan kalender.

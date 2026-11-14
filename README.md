@@ -13,14 +13,16 @@ Feel free to read/copy it, but expect to edit the source for your own system.
 
 ## What it shows
 
-The bar shows the Caps Lock indicator (icon only while active) and the clock
-(timezone defaults to `Asia/Jakarta`; override with `DWMSTATUS_TZ`). Brightness,
-volume, battery and the calendar are available in the combined popup described
-under [Click actions](#click-actions).
+The bar shows Nerd Font icons only, left to right: Caps Lock (only while
+active), brightness, volume, battery and clock. Percentages and the clock digits
+are shown in the combined popup described under
+[Click actions](#click-actions). The popup clock uses `DWMSTATUS_TZ` (default
+`Asia/Jakarta`).
 
 The root window name is only rewritten when the status actually changes, so dwm
-does not redraw its bar on every poll. Caps Lock and the clock are checked every
-0.5 s.
+does not redraw its bar on every poll. Caps Lock is checked every 0.5 s,
+brightness/battery every 1 s, volume every 2 s, and sysfs devices are re-scanned
+every 30 s so hotplug still works.
 
 Uses Nerd Font icons. Make sure your dwm font supports them.
 
@@ -48,20 +50,20 @@ dwmstatus &
 
 dwm draws the bar and receives the clicks, so click bindings live in dwm's
 `config.h`. `dwmstatus` publishes the visible segment names in the
-`_DWMSTATUS_SEGMENTS` root window property (`caps,tim`); the dwm patch in this
-setup maps a click to the segment under the pointer. A binding without a
-segment applies to the whole status text.
+`_DWMSTATUS_SEGMENTS` root window property (`caps,bri,vol,bat,tim`); the dwm
+patch in this setup maps a click to the segment under the pointer.
 
-Clicking the status text (the Caps Lock indicator or the clock) opens one
-combined GTK 3 popup, `dwmstatus-popup`. It always appears at a fixed position:
-the top-right corner of the monitor, just below the bar. The popup contains a
-brightness slider, a volume slider with a mute button, a read-only battery level
-bar with its charging state, and a calendar. Each section is labelled with a
-Nerd Font icon (sun, volume, battery, calendar); the volume and battery icons
-follow the level, a bolt appears while charging, and the calendar receives
-keyboard focus. Clicking the status text again closes the popup, as do `Esc`,
-`Return` and clicking elsewhere. Sections without a working backend are hidden,
-and the calendar is always available.
+Clicking an icon opens one combined GTK 3 popup, `dwmstatus-popup`, focused on
+the matching section: brightness, volume, battery, or the calendar/clock. The
+Caps Lock icon also opens the clock section. The popup always appears at a fixed
+position: 40 px from the top and 10 px from the right edge of the monitor. It
+contains a brightness slider, a volume slider with a mute button, a read-only
+battery level bar with its charging state, and a calendar whose header shows the
+current time and selected date. Each section is labelled with a Nerd Font icon
+(sun, volume, battery, calendar); the volume and battery icons follow the level,
+and a bolt appears while charging. Clicking a status icon again closes the
+popup, as do `Esc`, `Return` and clicking elsewhere. Sections without a working
+backend are hidden, and the calendar is always available.
 
 The popup needs Python 3, PyGObject and GTK 3 (Arch packages `python`,
 `python-gobject`, `gtk3`). Volume changes go through `wpctl` (PipeWire) or
@@ -84,19 +86,25 @@ make install
 Example `config.h`:
 
 ```c
-static const char *popupcmd[] = { "dwmstatus-popup", "tim", NULL };
+static const char *popupbricmd[] = { "dwmstatus-popup", "bri", NULL };
+static const char *popupvolcmd[] = { "dwmstatus-popup", "vol", NULL };
+static const char *popupbatcmd[] = { "dwmstatus-popup", "bat", NULL };
+static const char *popuptimcmd[] = { "dwmstatus-popup", "tim", NULL };
 
 static const Button buttons[] = {
 	/* ... */
-	{ ClkStatusText, 0, Button1, spawn, {.v = popupcmd } },
+	{ ClkStatusText, 0, Button1, spawn, {.v = popuptimcmd }, "tim" },
+	{ ClkStatusText, 0, Button1, spawn, {.v = popupvolcmd }, "vol" },
+	{ ClkStatusText, 0, Button1, spawn, {.v = popupbricmd }, "bri" },
+	{ ClkStatusText, 0, Button1, spawn, {.v = popupbatcmd }, "bat" },
+	{ ClkStatusText, 0, Button1, spawn, {.v = popuptimcmd }, "caps" },
 	{ ClkStatusText, 0, Button3, spawn, {.v = termcmd } },
 	/* ... */
 };
 ```
 
 The optional last field is the segment name (`caps`, `bri`, `vol`, `bat`,
-`tim`). Leaving it out means "the whole status text", which is what we want:
-both the Caps Lock indicator and the clock open the same popup. A segment
-binding wins over a generic one. Stock dwm does not have this field or the
+`tim`). Leaving it out means "the whole status text"; a segment binding wins
+over a generic one. Stock dwm does not have this field or the
 `_DWMSTATUS_SEGMENTS` lookup, so the small patch to `buttonpress()` and the
 `Button` struct is required for segment clicks.
