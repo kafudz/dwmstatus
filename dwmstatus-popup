@@ -333,7 +333,8 @@ def popup(initial):
     win.show_all()
     win.present()
 
-    # Place the popup under the click, on the monitor that owns the pointer.
+    # Static position: top-right corner of the monitor that owns the pointer,
+    # just below the bar. The popup no longer follows the mouse.
     display = Gdk.Display.get_default()
     seat = display.get_default_seat()
     pointer = seat.get_pointer()
@@ -342,9 +343,8 @@ def popup(initial):
     if monitor is not None:
         geometry = monitor.get_geometry()
         width, height = win.get_size()
-        x = min(max(px - width // 2, geometry.x + 8),
-                geometry.x + geometry.width - width - 8)
-        y = py + 24
+        x = geometry.x + geometry.width - width - 8
+        y = geometry.y + 36
         if y + height > geometry.y + geometry.height - 8:
             y = geometry.y + geometry.height - height - 8
         win.move(x, y)
