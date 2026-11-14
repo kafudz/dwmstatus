@@ -629,7 +629,10 @@ get_capslock(char *buf, size_t size)
         snprintf(buf, size, "%s", ICON_CAPS_ON);
 }
 
-/* Slimmer separator: single space on each side of the pipe */
+/* Invisible gap between bar icons (no pipe separator; keep in sync with
+ * STATUSSEP in dwm.c). */
+#define SEGSEP "    "
+
 static size_t
 append(char *dst, size_t size, size_t len, const char *seg)
 {
@@ -643,10 +646,9 @@ append(char *dst, size_t size, size_t len, const char *seg)
         return len;
 
     seg_len = strlen(seg);
-    if (len > 0 && size - len > 3) {
-        dst[len++] = ' ';
-        dst[len++] = '|';
-        dst[len++] = ' ';
+    if (len > 0 && size - len > sizeof(SEGSEP) - 1) {
+        memcpy(dst + len, SEGSEP, sizeof(SEGSEP) - 1);
+        len += sizeof(SEGSEP) - 1;
     }
     if (seg_len > size - len - 1)
         seg_len = size - len - 1;

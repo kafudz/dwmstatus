@@ -14,10 +14,10 @@ Feel free to read/copy it, but expect to edit the source for your own system.
 ## What it shows
 
 The bar shows Nerd Font icons only, left to right: Caps Lock (only while
-active), brightness, volume, battery and clock. Percentages and the clock digits
-are shown in the combined popup described under
-[Click actions](#click-actions). The popup clock uses `DWMSTATUS_TZ` (default
-`Asia/Jakarta`).
+active), brightness, volume, battery and clock. The icons are separated by
+invisible spacing (no `|` pipes). Percentages and the clock digits are shown in
+the combined popup described under [Click actions](#click-actions). The popup
+clock uses `DWMSTATUS_TZ` (default `Asia/Jakarta`).
 
 The root window name is only rewritten when the status actually changes, so dwm
 does not redraw its bar on every poll. Caps Lock is checked every 0.5 s,
@@ -56,14 +56,17 @@ patch in this setup maps a click to the segment under the pointer.
 Clicking an icon opens one combined GTK 3 popup, `dwmstatus-popup`, focused on
 the matching section: brightness, volume, battery, or the calendar/clock. The
 Caps Lock icon also opens the clock section. The popup always appears at a fixed
-position: 40 px from the top and 10 px from the right edge of the monitor. It
-contains a brightness slider, a volume slider with a mute button, a read-only
-battery level bar with its charging state, and a calendar whose header shows the
-current time and selected date. Each section is labelled with a Nerd Font icon
-(sun, volume, battery, calendar); the volume and battery icons follow the level,
-and a bolt appears while charging. Clicking a status icon again closes the
-popup, as do `Esc`, `Return` and clicking elsewhere. Sections without a working
-backend are hidden, and the calendar is always available.
+position: 40 px from the top and 10 px from the right edge of the monitor. Its
+window title is empty, so dwm's title area does not show `dwmstatus`.
+
+The popup starts with a large live clock (`HH:MM`), followed by a brightness
+slider, a volume slider with a mute button, a read-only battery level bar with
+its charging state, and a calendar whose header shows the selected date. Each
+section is labelled with a Nerd Font icon (clock, sun, volume, battery,
+calendar); the volume and battery icons follow the level, and a bolt appears
+while charging. Clicking a status icon again closes the popup, as do `Esc`,
+`Return` and clicking elsewhere. Sections without a working backend are hidden,
+and the clock and calendar are always available.
 
 The popup needs Python 3, PyGObject and GTK 3 (Arch packages `python`,
 `python-gobject`, `gtk3`). Volume changes go through `wpctl` (PipeWire) or

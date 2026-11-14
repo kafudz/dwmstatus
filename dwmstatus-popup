@@ -47,6 +47,7 @@ ICON_BAT_1Q = "\uf243"      # nf-fa-battery_quarter
 ICON_BAT_EMPTY = "\uf244"   # nf-fa-battery_empty
 ICON_BOLT = "\uf0e7"        # nf-fa-bolt
 ICON_CALENDAR = "\uf073"    # nf-fa-calendar
+ICON_CLOCK = "\uf017"       # nf-fa-clock_o
 
 CSS = """
 .dwmstatus-icon {
@@ -54,6 +55,10 @@ CSS = """
     font-size: 18px;
 }
 .dwmstatus-title {
+    font-weight: bold;
+}
+.dwmstatus-clock {
+    font-size: 22px;
     font-weight: bold;
 }
 .dwmstatus-level trough {
@@ -120,7 +125,8 @@ def popup(initial):
     Gdk.set_program_class("dwmstatus-popup")
 
     win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
-    win.set_title("dwmstatus")
+    # Empty title so dwm's title area does not show "dwmstatus".
+    win.set_title("")
     win.set_decorated(False)
     win.set_resizable(False)
     win.set_border_width(14)
@@ -157,6 +163,23 @@ def popup(initial):
     sections = {}
     pending = {}
     shown_at = [0]
+
+    # --- clock (live) -----------------------------------------------------
+    clock_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    clock_box.set_border_width(6)
+    clock_label = Gtk.Label(xalign=1)
+    clock_label.get_style_context().add_class("dwmstatus-clock")
+    clock_box.pack_start(icon(ICON_CLOCK), False, False, 0)
+    clock_box.pack_start(clock_label, True, True, 0)
+    content.pack_start(clock_box, False, False, 0)
+
+    def tick_clock():
+        clock_label.set_text(f"{datetime.datetime.now():%H:%M}")
+        return True
+
+    tick_clock()
+    GLib.timeout_add_seconds(1, tick_clock)
+    content.pack_start(Gtk.Separator(), False, False, 0)
 
     # --- brightness -------------------------------------------------------
     bri_backend = backend.detect_brightness()
@@ -297,31 +320,23 @@ def popup(initial):
         content.pack_start(bat_box, False, False, 0)
         sections["bat"] = (bat_box, level)
 
-    # --- calendar and clock -----------------------------------------------
+    # --- calendar ---------------------------------------------------------
     today = datetime.date.today()
-    selected = [today]
 
-    def clock_text():
-        now = datetime.datetime.now()
-        return f"{now:%H:%M}  {selected[0]:%a, %d %b %Y}"
+    def date_text(day):
+        return f"{day:%a, %d %b %Y}"
 
     cal_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
     cal_box.set_border_width(6)
-    cal_value = Gtk.Label(label=clock_text(), xalign=1)
+    cal_value = Gtk.Label(label=date_text(today), xalign=1)
     calendar = Gtk.Calendar()
     calendar.select_month(today.month - 1, today.year)
 
     def on_day_selected(widget):
         year, month, day = widget.get_date()
-        selected[0] = datetime.date(year, month + 1, day)
-        cal_value.set_text(clock_text())
-
-    def tick_clock():
-        cal_value.set_text(clock_text())
-        return True
+        cal_value.set_text(date_text(datetime.date(year, month + 1, day)))
 
     calendar.connect("day-selected", on_day_selected)
-    GLib.timeout_add_seconds(1, tick_clock)
 
     cal_box.pack_start(heading(ICON_CALENDAR, "Calendar", cal_value),
                        False, False, 0)

@@ -9,8 +9,9 @@ dwmstatus \- status bar untuk dynamic window manager (dwm)
 adalah aplikasi status bar ringan yang berjalan di latar belakang untuk memperbarui nama jendela utama (root window name) pada sistem X11, yang digunakan oleh dwm untuk menampilkan status sistem.
 .P
 Bar menampilkan ikon Nerd Font saja, dari kiri ke kanan: Caps Lock (hanya saat
-aktif), kecerahan, volume, baterai, dan jam. Persentase dan digit jam
-ditampilkan di popup gabungan
+aktif), kecerahan, volume, baterai, dan jam. Ikon dipisahkan oleh spasi tak
+terlihat (tanpa pipa `|`). Persentase dan digit jam ditampilkan di popup
+gabungan
 .BR dwmstatus-popup .
 .P
 Nama jendela utama hanya diperbarui saat status berubah, sehingga dwm tidak
@@ -43,17 +44,19 @@ Zona waktu yang dipakai untuk digit jam di popup (default: Asia/Jakarta).
 .SH POPUP
 Skrip
 .B dwmstatus-popup
-menampilkan satu popup GTK 3 gabungan: slider kecerahan, slider volume dengan
-tombol mute, indikator level baterai beserta status pengisiannya, dan kalender
-yang judulnya menampilkan jam serta tanggal terpilih.
+menampilkan satu popup GTK 3 gabungan: jam besar yang diperbarui setiap detik,
+slider kecerahan, slider volume dengan tombol mute, indikator level baterai
+beserta status pengisiannya, dan kalender yang judulnya menampilkan tanggal
+terpilih.
 Popup selalu muncul di posisi tetap, yaitu 40 piksel dari atas dan 10 piksel
-dari tepi kanan monitor.
+dari tepi kanan monitor. Judul jendelanya kosong, sehingga area judul dwm tidak
+menampilkan teks apa pun.
 Argumen opsional
 .BR bri ", " vol ", " bat " atau " tim
 memfokuskan bagian yang sesuai dengan ikon yang diklik.
-Setiap bagian diberi ikon Nerd Font: matahari untuk kecerahan, ikon volume
-yang mengikuti level, ikon baterai yang mengikuti sisa daya (dengan ikon
-petir saat mengisi), dan kalender.
+Setiap bagian diberi ikon Nerd Font: ikon jam untuk waktu, matahari untuk
+kecerahan, ikon volume yang mengikuti level, ikon baterai yang mengikuti sisa
+daya (dengan ikon petir saat mengisi), dan kalender.
 Bagian yang tidak memiliki backend yang berfungsi akan disembunyikan.
 Klik lagi pada bagian yang sama, tombol
 .BR Esc ,
