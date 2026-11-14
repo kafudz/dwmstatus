@@ -1,0 +1,33 @@
+#!/bin/sh
+# dwmstatus-calendar - show the current month in a popup.
+# Intended for a left-click binding on dwm's status text (see README).
+
+set -u
+
+title=$(date '+%A, %d %B %Y') || title='Calendar'
+body=$(cal) || exit 1
+
+# Prefer a desktop notification: no window-manager rules are needed and
+# repeated clicks replace the previous calendar.  Fall back to a terminal
+# or dmenu when no notification daemon is available.
+if [ -n "${DISPLAY:-}" ]; then
+	if command -v dunstify >/dev/null 2>&1 &&
+		dunstify -a dwmstatus -u low -t 0 -r 1999 "$title" "$body"; then
+		exit 0
+	fi
+	if command -v notify-send >/dev/null 2>&1 &&
+		notify-send -a dwmstatus -u low -t 0 \
+			-h string:x-dunst-stack-tag:dwmstatus-calendar \
+			"$title" "$body"; then
+		exit 0
+	fi
+	if command -v st >/dev/null 2>&1; then
+		st -g 24x11 -c dwmstatus-calendar -n dwmstatus-calendar \
+			-T calendar -e cal && exit 0
+	fi
+	if command -v dmenu >/dev/null 2>&1; then
+		printf '%s\n' "$body" | dmenu -l 8 -p "$title" && exit 0
+	fi
+fi
+
+printf '%s\n\n%s\n' "$title" "$body"

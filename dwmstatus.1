@@ -25,12 +25,28 @@ Cetak versi lalu keluar.
 .TP
 .B DWMSTATUS_TZ
 Zona waktu yang dipakai untuk jam (default: Asia/Jakarta).
+.SH KALENDER
+Skrip
+.B dwmstatus-calendar
+menampilkan kalender bulan berjalan sebagai notifikasi desktop
+(menggunakan
+.BR dunstify (1)
+atau
+.BR notify-send (1)),
+dengan fallback ke
+.BR st (1)
+atau
+.BR dmenu (1).
+Skrip ini dipanggil oleh
+.BR dwm (1)
+melalui pengikatan tombol pada teks status; lihat README untuk contoh.
 .SH SIGNALS
 .B SIGINT
 dan
 .B SIGTERM
 menghentikan dwmstatus dengan bersih.
 .SH SEE ALSO
+.BR cal (1),
 .BR dwm (1),
 .BR wpctl (1)
 .SH AUTHORS

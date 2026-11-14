@@ -47,3 +47,34 @@ replace the running instance. Or start it from your `.xinitrc` / autostart:
 ```bash
 dwmstatus &
 ```
+
+## Calendar
+
+`dwmstatus-calendar` shows the current month in a popup. It prefers
+`dunstify` / `notify-send`, then falls back to `st`, `dmenu`, or plain text.
+`cal` (util-linux) is required; the display tools are optional. Install it
+with:
+
+```bash
+make install
+```
+
+`dwmstatus` only writes the root window name and never receives clicks, so
+the click has to be bound in dwm. Add this to dwm's `config.h`:
+
+```c
+static const char *calendarcmd[] = { "dwmstatus-calendar", NULL };
+
+static const Button buttons[] = {
+	/* ... */
+	{ ClkStatusText, 0, Button1, spawn, {.v = calendarcmd } },
+	/* ... */
+};
+```
+
+dwm treats the whole status text as `ClkStatusText`; the clock is the
+rightmost segment, so a left click on the clock (or elsewhere on the status
+text) opens the calendar. An existing right-click binding (for example
+Button3 to a terminal) is unaffected. If you need the target to be strictly
+the clock segment, dwm needs a small `ClkClock` region in `buttonpress()`,
+because dwm does not expose individual status segments to the status client.
