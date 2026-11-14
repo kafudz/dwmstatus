@@ -1,2 +1,5 @@
 dwmstatus
 dwmstatus.o
+__pycache__/
+*.pyc
+dwmstatus-*.tar.gz

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""dwmstatus-popup - combined brightness, volume and calendar popup.
+"""dwmstatus-popup - combined brightness, volume, battery and calendar popup.
 
-A left click on the status bar opens this window.  Passing "bri", "vol" or
-"tim" (the segment names published by dwmstatus) focuses the matching
-section, so clicking an indicator opens the popup at that control.
+A left click on the status bar opens this window.  Passing "bri", "vol",
+"bat", or "tim" (the segment names published by dwmstatus) focuses the
+matching section, so clicking an indicator opens the popup at that control.
 
 Sections that have no working backend are hidden.  The calendar always works.
 """
@@ -13,6 +13,8 @@ import fcntl
 import os
 import signal
 import sys
+
+sys.dont_write_bytecode = True  # keep __pycache__ out of the repo
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 for _path in (HERE, os.path.join(HERE, os.pardir, "lib", "dwmstatus")):
@@ -30,6 +32,12 @@ ICON_BRIGHTNESS = "\uf185"  # nf-fa-sun_o
 ICON_VOL_OFF = "\uf026"     # nf-fa-volume_off
 ICON_VOL_LOW = "\uf027"     # nf-fa-volume_down
 ICON_VOL_HIGH = "\uf028"    # nf-fa-volume_up
+ICON_BAT_FULL = "\uf240"    # nf-fa-battery_full
+ICON_BAT_3Q = "\uf241"      # nf-fa-battery_three_quarters
+ICON_BAT_HALF = "\uf242"    # nf-fa-battery_half
+ICON_BAT_1Q = "\uf243"      # nf-fa-battery_quarter
+ICON_BAT_EMPTY = "\uf244"   # nf-fa-battery_empty
+ICON_BOLT = "\uf0e7"        # nf-fa-bolt
 ICON_CALENDAR = "\uf073"    # nf-fa-calendar
 
 CSS = """
@@ -43,6 +51,20 @@ CSS = """
 .dwmstatus-active {
     background-color: rgba(53, 132, 228, 0.18);
     border-radius: 8px;
+}
+.dwmstatus-level trough {
+    min-height: 6px;
+    border-radius: 3px;
+    background-color: alpha(currentColor, 0.15);
+}
+.dwmstatus-level block.filled {
+    min-height: 6px;
+    border-radius: 3px;
+    background-color: #3584e4;
+}
+.dwmstatus-level block.empty {
+    min-height: 6px;
+    background-color: transparent;
 }
 """
 
@@ -109,10 +131,11 @@ def popup(initial):
         label = Gtk.Label(label=char)
         label.get_style_context().add_class("dwmstatus-icon")
         label.set_valign(Gtk.Align.CENTER)
+        label.set_margin_end(8)
         return label
 
     def heading(icon_char, text, value_label=None):
-        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         name = Gtk.Label(label=text, xalign=0)
         name.get_style_context().add_class("dwmstatus-title")
         head.pack_start(icon(icon_char), False, False, 0)
@@ -167,7 +190,7 @@ def popup(initial):
     vol_state = backend.volume_state(vol_backend) if vol_backend else None
     vol_scale = None
     if vol_state is not None:
-        if bri_state is not None:
+        if sections:
             content.pack_start(Gtk.Separator(), False, False, 0)
         vol_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         vol_box.set_border_width(6)
@@ -217,7 +240,7 @@ def popup(initial):
 
         vol_scale.connect("value-changed", on_volume)
         mute.connect("clicked", on_mute)
-        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         name = Gtk.Label(label="Volume", xalign=0)
         name.get_style_context().add_class("dwmstatus-title")
         head.pack_start(vol_icon, False, False, 0)
@@ -228,6 +251,47 @@ def popup(initial):
         vol_box.pack_start(mute, False, False, 0)
         content.pack_start(vol_box, False, False, 0)
         sections["vol"] = (vol_box, vol_scale)
+
+    # --- battery ----------------------------------------------------------
+    bat_state = backend.battery_state()
+    if bat_state is not None:
+        percent, status = bat_state
+        if sections:
+            content.pack_start(Gtk.Separator(), False, False, 0)
+
+        if percent >= 88:
+            glyph = ICON_BAT_FULL
+        elif percent >= 63:
+            glyph = ICON_BAT_3Q
+        elif percent >= 38:
+            glyph = ICON_BAT_HALF
+        elif percent >= 13:
+            glyph = ICON_BAT_1Q
+        else:
+            glyph = ICON_BAT_EMPTY
+        if status == "Charging":
+            glyph = f"{ICON_BOLT}  {glyph}"
+
+        bat_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        bat_box.set_border_width(6)
+        bat_text = f"{percent}%"
+        if status:
+            bat_text = f"{bat_text}  {status}"
+        bat_value = Gtk.Label(label=bat_text, xalign=1)
+
+        level = Gtk.LevelBar()
+        level.set_mode(Gtk.LevelBarMode.CONTINUOUS)
+        level.set_min_value(0)
+        level.set_max_value(100)
+        level.set_value(percent)
+        level.set_size_request(280, -1)
+        level.get_style_context().add_class("dwmstatus-level")
+
+        bat_box.pack_start(heading(glyph, "Battery", bat_value),
+                           False, False, 0)
+        bat_box.pack_start(level, False, False, 0)
+        content.pack_start(bat_box, False, False, 0)
+        sections["bat"] = (bat_box, level)
 
     # --- calendar ---------------------------------------------------------
     today = datetime.date.today()
@@ -247,7 +311,8 @@ def popup(initial):
     cal_box.pack_start(heading(ICON_CALENDAR, "Calendar", cal_value),
                        False, False, 0)
     cal_box.pack_start(calendar, False, False, 0)
-    content.pack_start(Gtk.Separator(), False, False, 0)
+    if sections:
+        content.pack_start(Gtk.Separator(), False, False, 0)
     content.pack_start(cal_box, False, False, 0)
     sections["tim"] = (cal_box, calendar)
 
@@ -303,7 +368,7 @@ def popup(initial):
 
 
 def usage(stream=sys.stderr):
-    print("usage: dwmstatus-popup [bri|vol|tim]", file=stream)
+    print("usage: dwmstatus-popup [bri|vol|bat|tim]", file=stream)
     return 2
 
 
@@ -314,7 +379,7 @@ def main():
     if argv[0] in ("-h", "--help"):
         usage(sys.stdout)
         return 0
-    if len(argv) == 1 and argv[0] in ("bri", "vol", "tim"):
+    if len(argv) == 1 and argv[0] in ("bri", "vol", "bat", "tim"):
         return popup(argv[0])
     return usage()
 

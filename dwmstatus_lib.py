@@ -1,4 +1,4 @@
-"""Shared volume and brightness backends for the dwmstatus popup helpers."""
+"""Shared volume, brightness and battery backends for the dwmstatus helpers."""
 
 import os
 import re
@@ -8,6 +8,7 @@ import subprocess
 SINK = "@DEFAULT_AUDIO_SINK@"
 PULSE_SINK = "@DEFAULT_SINK@"
 BLDIR = "/sys/class/backlight"
+PSDIR = "/sys/class/power_supply"
 DEVNULL = subprocess.DEVNULL
 
 
@@ -146,3 +147,67 @@ def set_brightness(backend, percent):
         if result.returncode == 0:
             return True
     return sysfs_set(percent)
+
+
+# --- battery --------------------------------------------------------------
+
+def read_attr(path):
+    try:
+        with open(path) as handle:
+            return handle.read().strip()
+    except OSError:
+        return None
+
+
+def read_int(path):
+    value = read_attr(path)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def battery_dir():
+    try:
+        names = os.listdir(PSDIR)
+    except OSError:
+        return None
+    fallback = None
+    for name in sorted(names):
+        path = os.path.join(PSDIR, name)
+        if read_attr(os.path.join(path, "type")) != "Battery":
+            continue
+        # Skip batteries of peripherals (mouse, headset, ...).
+        if read_attr(os.path.join(path, "scope")) == "Device":
+            continue
+        # Prefer a battery that actually reports capacity.
+        if read_attr(os.path.join(path, "capacity")) is not None:
+            return path
+        if fallback is None:
+            fallback = path
+    return fallback
+
+
+def battery_state():
+    """Return (percent, status), or None when no battery is present."""
+    path = battery_dir()
+    if path is None:
+        return None
+
+    percent = read_int(os.path.join(path, "capacity"))
+    if percent is None:
+        for now, full in (("charge_now", "charge_full"),
+                          ("energy_now", "energy_full")):
+            current = read_int(os.path.join(path, now))
+            total = read_int(os.path.join(path, full))
+            if current is not None and total:
+                percent = int(current * 100 / total + 0.5)
+                break
+    if percent is None:
+        return None
+
+    percent = max(0, min(100, percent))
+    status = read_attr(os.path.join(path, "status")) or ""
+    return (percent, status)

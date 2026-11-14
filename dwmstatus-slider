@@ -15,6 +15,8 @@ import os
 import signal
 import sys
 
+sys.dont_write_bytecode = True  # keep __pycache__ out of the repo
+
 HERE = os.path.dirname(os.path.realpath(__file__))
 for _path in (HERE, os.path.join(HERE, os.pardir, "lib", "dwmstatus")):
     if os.path.isfile(os.path.join(_path, "dwmstatus_lib.py")):

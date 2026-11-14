@@ -56,13 +56,15 @@ dwm draws the bar and receives the clicks, so click bindings live in dwm's
 the dwm patch in this setup maps a click to the segment under the pointer.
 Bindings without a segment apply to the whole status text.
 
-Clicking the brightness, volume or clock segment opens one combined GTK 3
-popup, `dwmstatus-popup`, under the pointer. It contains a brightness slider, a
-volume slider with a mute button, and a calendar. Each section is labelled with
-a Nerd Font icon (sun, volume, calendar); the volume icon follows the level, and
-the clicked section is highlighted and focused. Clicking any of those segments
-again closes the popup, as do `Esc`, `Return` and clicking elsewhere. Sections
-without a working backend are hidden, and the calendar is always available.
+Clicking the brightness, volume, battery or clock segment opens one combined
+GTK 3 popup, `dwmstatus-popup`, under the pointer. It contains a brightness
+slider, a volume slider with a mute button, a read-only battery level bar with
+its charging state, and a calendar. Each section is labelled with a Nerd Font
+icon (sun, volume, battery, calendar); the volume and battery icons follow the
+level, a bolt appears while charging, and the clicked section is highlighted
+and focused. Clicking any of those segments again closes the popup, as do
+`Esc`, `Return` and clicking elsewhere. Sections without a working backend are
+hidden, and the calendar is always available.
 
 The popup needs Python 3, PyGObject and GTK 3 (Arch packages `python`,
 `python-gobject`, `gtk3`). Volume changes go through `wpctl` (PipeWire) or
@@ -88,12 +90,14 @@ Example `config.h`:
 static const char *popuptimcmd[] = { "dwmstatus-popup", "tim", NULL };
 static const char *popupvolcmd[] = { "dwmstatus-popup", "vol", NULL };
 static const char *popupbricmd[] = { "dwmstatus-popup", "bri", NULL };
+static const char *popupbatcmd[] = { "dwmstatus-popup", "bat", NULL };
 
 static const Button buttons[] = {
 	/* ... */
 	{ ClkStatusText, 0, Button1, spawn, {.v = popuptimcmd }, "tim" },
 	{ ClkStatusText, 0, Button1, spawn, {.v = popupvolcmd }, "vol" },
 	{ ClkStatusText, 0, Button1, spawn, {.v = popupbricmd }, "bri" },
+	{ ClkStatusText, 0, Button1, spawn, {.v = popupbatcmd }, "bat" },
 	{ ClkStatusText, 0, Button3, spawn, {.v = termcmd } },
 	/* ... */
 };
