@@ -48,33 +48,48 @@ replace the running instance. Or start it from your `.xinitrc` / autostart:
 dwmstatus &
 ```
 
-## Calendar
+## Click actions
+
+dwm draws the bar and receives the clicks, so click bindings live in dwm's
+`config.h`. `dwmstatus` publishes the name of every visible segment in the
+`_DWMSTATUS_SEGMENTS` root window property (for example `bri,vol,bat,tim`);
+the dwm patch in this setup maps a click to the segment under the pointer.
+Bindings without a segment apply to the whole status text.
 
 `dwmstatus-calendar` shows the current month in a popup. It prefers
 `dunstify` / `notify-send`, then falls back to `st`, `dmenu`, or plain text.
-`cal` (util-linux) is required; the display tools are optional. Install it
-with:
+`cal` (util-linux) is required; the display tools are optional.
+
+`dwmstatus-volume` shows an interactive GTK 3 slider and needs Python 3,
+PyGObject and GTK 3 (available in the Arch packages `python`,
+`python-gobject` and `gtk3`). Volume changes go through `wpctl` (PipeWire) or
+`pactl` (PulseAudio); moving the slider while muted also unmutes. Clicking the
+volume segment again closes the open popup. The command line modes `--get`,
+`--set PERCENT`, `--mute`, `--unmute` and `--toggle-mute` work without GTK.
+
+Install both helpers with:
 
 ```bash
 make install
 ```
 
-`dwmstatus` only writes the root window name and never receives clicks, so
-the click has to be bound in dwm. Add this to dwm's `config.h`:
+Example `config.h`:
 
 ```c
 static const char *calendarcmd[] = { "dwmstatus-calendar", NULL };
+static const char *volumecmd[]   = { "dwmstatus-volume", NULL };
 
 static const Button buttons[] = {
 	/* ... */
-	{ ClkStatusText, 0, Button1, spawn, {.v = calendarcmd } },
+	{ ClkStatusText, 0, Button1, spawn, {.v = calendarcmd }, "tim" },
+	{ ClkStatusText, 0, Button1, spawn, {.v = volumecmd },  "vol" },
+	{ ClkStatusText, 0, Button3, spawn, {.v = termcmd } },
 	/* ... */
 };
 ```
 
-dwm treats the whole status text as `ClkStatusText`; the clock is the
-rightmost segment, so a left click on the clock (or elsewhere on the status
-text) opens the calendar. An existing right-click binding (for example
-Button3 to a terminal) is unaffected. If you need the target to be strictly
-the clock segment, dwm needs a small `ClkClock` region in `buttonpress()`,
-because dwm does not expose individual status segments to the status client.
+The last field is the segment name: `caps`, `bri`, `vol`, `bat` or `tim`.
+Leaving it out means "the whole status text"; a segment binding wins over a
+generic one. Stock dwm does not have this field or the `_DWMSTATUS_SEGMENTS`
+lookup, so the small patch to `buttonpress()` and the `Button` struct is
+required for per-segment clicks.

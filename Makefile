@@ -32,7 +32,7 @@ dist: clean
 	@mkdir -p ${NAME}-${VERSION}
 	@cp -R Makefile LICENSE README.md config.mk \
 		${SRC} ${NAME}.1 ${NAME}-restart ${NAME}-calendar \
-		${NAME}-${VERSION}
+		${NAME}-volume ${NAME}-${VERSION}
 	@tar -cf ${NAME}-${VERSION}.tar ${NAME}-${VERSION}
 	@gzip ${NAME}-${VERSION}.tar
 	@rm -rf ${NAME}-${VERSION}
@@ -46,6 +46,8 @@ install: all
 	@chmod 755 ${DESTDIR}${PREFIX}/bin/${NAME}-restart
 	@cp -f ${NAME}-calendar ${DESTDIR}${PREFIX}/bin
 	@chmod 755 ${DESTDIR}${PREFIX}/bin/${NAME}-calendar
+	@cp -f ${NAME}-volume ${DESTDIR}${PREFIX}/bin
+	@chmod 755 ${DESTDIR}${PREFIX}/bin/${NAME}-volume
 	@echo installing manual page to ${DESTDIR}${MANPREFIX}/man1
 	@mkdir -p ${DESTDIR}${MANPREFIX}/man1
 	@sed "s/VERSION/${VERSION}/g" < ${NAME}.1 > ${DESTDIR}${MANPREFIX}/man1/${NAME}.1
@@ -54,7 +56,8 @@ install: all
 uninstall:
 	@echo removing executable file from ${DESTDIR}${PREFIX}/bin
 	@rm -f ${DESTDIR}${PREFIX}/bin/${NAME} ${DESTDIR}${PREFIX}/bin/${NAME}-restart \
-		${DESTDIR}${PREFIX}/bin/${NAME}-calendar
+		${DESTDIR}${PREFIX}/bin/${NAME}-calendar \
+		${DESTDIR}${PREFIX}/bin/${NAME}-volume
 	@echo removing manual page from ${DESTDIR}${MANPREFIX}/man1
 	@rm -f ${DESTDIR}${MANPREFIX}/man1/${NAME}.1
 

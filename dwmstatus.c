@@ -8,6 +8,8 @@ Brightness and battery are read straight from sysfs (no subprocess).
 Segments that are not available on the machine are hidden instead of printing "n/a".
 The root window name is only updated when the status actually changes, so dwm
 does not redraw its bar twice per second for an identical string.
+The names of the visible segments are published in _DWMSTATUS_SEGMENTS so dwm
+can route a click on the bar to the segment under the pointer.
 
 Build: gcc -O2 -Wall -o dwmstatus dwmstatus.c -lX11
 */
@@ -26,6 +28,7 @@ Build: gcc -O2 -Wall -o dwmstatus dwmstatus.c -lX11
 #include <unistd.h>
 #include <X11/Xlib.h>
 #include <X11/XKBlib.h>
+#include <X11/Xatom.h>
 
 #ifndef VERSION
 #define VERSION "unknown"
@@ -63,6 +66,7 @@ static const char *tzlocal = "Asia/Jakarta";
 
 static Display *dpy;
 static Window root;
+static Atom segatom; /* _DWMSTATUS_SEGMENTS, published for dwm's click handling */
 static volatile sig_atomic_t running = 1;
 
 static void
@@ -72,9 +76,19 @@ onsignal(int sig)
     running = 0;
 }
 
+/*
+ * Publish the bar text and the names of the segments it contains. dwm reads
+ * _DWMSTATUS_SEGMENTS to map a click to the segment under the pointer, so
+ * one segment (for example "vol") can open a popup without making the whole
+ * status text do the same thing.
+ */
 static void
-setstatus(const char *str)
+setstatus(const char *str, const char *segments)
 {
+    if (segatom != None)
+        XChangeProperty(dpy, root, segatom, XA_STRING, 8, PropModeReplace,
+                        (const unsigned char *)segments,
+                        (int)strlen(segments));
     XStoreName(dpy, root, str);
     XFlush(dpy);
 }
@@ -657,6 +671,33 @@ append(char *dst, size_t size, size_t len, const char *seg)
     return len;
 }
 
+/*
+ * Companion to append(): record the name of a segment that was actually
+ * added to the status text. Names are comma separated and follow the visual
+ * order of the segments ("caps,bri,vol,bat,tim").
+ */
+static size_t
+appendseg(char *dst, size_t size, size_t len, const char *name,
+          const char *seg)
+{
+    size_t name_len;
+
+    if (size == 0 || !seg || seg[0] == '\0')
+        return len;
+    if (len >= size)
+        return size - 1;
+
+    name_len = strlen(name);
+    if (len + (len > 0 ? 1 : 0) + name_len + 1 > size)
+        return len;
+    if (len > 0)
+        dst[len++] = ',';
+    memcpy(dst + len, name, name_len);
+    len += name_len;
+    dst[len] = '\0';
+    return len;
+}
+
 /* Paths are cached and re-discovered periodically to survive hotplug. */
 static char bat_path[PATH_MAX];
 static char bl_path[PATH_MAX];
@@ -678,6 +719,7 @@ main(int argc, char *argv[])
     struct sigaction sa;
     char status[512], last_status[512];
     char caps[32], bri[64], vol[64], bat[64], tim[64];
+    char segs[64];
     const char *tz;
     long long now, last_sysfs, last_volume, last_discovery;
     int have_last = 0;
@@ -696,6 +738,7 @@ main(int argc, char *argv[])
         return 1;
     }
     root = DefaultRootWindow(dpy);
+    segatom = XInternAtom(dpy, "_DWMSTATUS_SEGMENTS", False);
 
     /* Do not leak the X connection into short-lived children (wpctl). */
     {
@@ -756,6 +799,7 @@ main(int argc, char *argv[])
 
         len = 0;
         status[0] = '\0';
+        segs[0] = '\0';
 
         len = append(status, sizeof(status), len, caps);
         len = append(status, sizeof(status), len, bri);
@@ -763,13 +807,20 @@ main(int argc, char *argv[])
         len = append(status, sizeof(status), len, bat);
         len = append(status, sizeof(status), len, tim);
 
+        len = 0;
+        len = appendseg(segs, sizeof(segs), len, "caps", caps);
+        len = appendseg(segs, sizeof(segs), len, "bri", bri);
+        len = appendseg(segs, sizeof(segs), len, "vol", vol);
+        len = appendseg(segs, sizeof(segs), len, "bat", bat);
+        len = appendseg(segs, sizeof(segs), len, "tim", tim);
+
         /*
          * Only touch the root window name when something changed. Setting
          * an identical name still makes dwm receive PropertyNotify and
          * redraw its entire bar, which is wasted CPU every poll.
          */
         if (!have_last || strcmp(status, last_status) != 0) {
-            setstatus(status);
+            setstatus(status, segs);
             snprintf(last_status, sizeof(last_status), "%s", status);
             have_last = 1;
         }
@@ -778,7 +829,7 @@ main(int argc, char *argv[])
             sleep_ms(UPDATE_INTERVAL_MS);
     }
 
-    setstatus("");
+    setstatus("", "");
     XCloseDisplay(dpy);
     return 0;
 }

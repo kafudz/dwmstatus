@@ -12,6 +12,11 @@ Yang ditampilkan, dari kiri ke kanan: status Caps Lock (hanya saat aktif), kecer
 .P
 Nama jendela utama hanya diperbarui saat status berubah, sehingga dwm tidak menggambar ulang bar setiap kali polling. Caps Lock dan waktu diperiksa setiap 0,5 detik, baterai/kecerahan setiap 1 detik, volume setiap 2 detik, dan perangkat sysfs dipindai ulang setiap 30 detik agar perangkat yang baru dicolok tetap terdeteksi.
 .P
+.B dwmstatus
+juga menulis nama bagian yang sedang tampil ke properti
+.I _DWMSTATUS_SEGMENTS
+pada root window, sehingga dwm dapat mengarahkan klik ke bagian tertentu (misalnya jam atau volume).
+.P
 Kecerahan dan baterai dibaca langsung dari
 .IR /sys/class .
 Volume dibaca dengan
@@ -40,6 +45,27 @@ atau
 Skrip ini dipanggil oleh
 .BR dwm (1)
 melalui pengikatan tombol pada teks status; lihat README untuk contoh.
+.SH VOLUME
+Skrip
+.B dwmstatus-volume
+menampilkan slider volume GTK 3 di bawah kursor.
+Perubahan dikirim ke sink audio default melalui
+.BR wpctl (1)
+atau
+.BR pactl (1);
+menggeser slider saat mute juga membatalkan mute.
+Klik lagi pada bagian volume menutup popup.
+Mode baris perintah
+.BR \-\-get ,
+.BR \-\-set " PERCENT" ,
+.BR \-\-mute ,
+.BR \-\-unmute ,
+dan
+.B \-\-toggle-mute
+bekerja tanpa GTK.
+Skrip ini dipanggil oleh
+.BR dwm (1)
+melalui pengikatan tombol pada bagian volume teks status.
 .SH SIGNALS
 .B SIGINT
 dan
@@ -48,6 +74,7 @@ menghentikan dwmstatus dengan bersih.
 .SH SEE ALSO
 .BR cal (1),
 .BR dwm (1),
+.BR pactl (1),
 .BR wpctl (1)
 .SH AUTHORS
 by 20h
