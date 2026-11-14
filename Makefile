@@ -33,7 +33,7 @@ dist: clean
 	@cp -R Makefile LICENSE README.md config.mk \
 		${SRC} ${NAME}.1 ${NAME}-restart ${NAME}-calendar \
 		${NAME}-slider ${NAME}-volume ${NAME}-brightness \
-		${NAME}-${VERSION}
+		${NAME}-popup ${NAME}_lib.py ${NAME}-${VERSION}
 	@tar -cf ${NAME}-${VERSION}.tar ${NAME}-${VERSION}
 	@gzip ${NAME}-${VERSION}.tar
 	@rm -rf ${NAME}-${VERSION}
@@ -53,6 +53,12 @@ install: all
 	@chmod 755 ${DESTDIR}${PREFIX}/bin/${NAME}-volume
 	@cp -f ${NAME}-brightness ${DESTDIR}${PREFIX}/bin
 	@chmod 755 ${DESTDIR}${PREFIX}/bin/${NAME}-brightness
+	@cp -f ${NAME}-popup ${DESTDIR}${PREFIX}/bin
+	@chmod 755 ${DESTDIR}${PREFIX}/bin/${NAME}-popup
+	@echo installing helper library to ${DESTDIR}${PREFIX}/lib/${NAME}
+	@mkdir -p ${DESTDIR}${PREFIX}/lib/${NAME}
+	@cp -f ${NAME}_lib.py ${DESTDIR}${PREFIX}/lib/${NAME}
+	@chmod 644 ${DESTDIR}${PREFIX}/lib/${NAME}/${NAME}_lib.py
 	@echo installing manual page to ${DESTDIR}${MANPREFIX}/man1
 	@mkdir -p ${DESTDIR}${MANPREFIX}/man1
 	@sed "s/VERSION/${VERSION}/g" < ${NAME}.1 > ${DESTDIR}${MANPREFIX}/man1/${NAME}.1
@@ -64,7 +70,11 @@ uninstall:
 		${DESTDIR}${PREFIX}/bin/${NAME}-calendar \
 		${DESTDIR}${PREFIX}/bin/${NAME}-slider \
 		${DESTDIR}${PREFIX}/bin/${NAME}-volume \
-		${DESTDIR}${PREFIX}/bin/${NAME}-brightness
+		${DESTDIR}${PREFIX}/bin/${NAME}-brightness \
+		${DESTDIR}${PREFIX}/bin/${NAME}-popup
+	@echo removing helper library from ${DESTDIR}${PREFIX}/lib/${NAME}
+	@rm -f ${DESTDIR}${PREFIX}/lib/${NAME}/${NAME}_lib.py
+	@rmdir ${DESTDIR}${PREFIX}/lib/${NAME} 2>/dev/null || true
 	@echo removing manual page from ${DESTDIR}${MANPREFIX}/man1
 	@rm -f ${DESTDIR}${MANPREFIX}/man1/${NAME}.1
 

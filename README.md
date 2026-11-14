@@ -56,17 +56,23 @@ dwm draws the bar and receives the clicks, so click bindings live in dwm's
 the dwm patch in this setup maps a click to the segment under the pointer.
 Bindings without a segment apply to the whole status text.
 
-`dwmstatus-calendar` shows the current month in a popup. It prefers
-`dunstify` / `notify-send`, then falls back to `st`, `dmenu`, or plain text.
-`cal` (util-linux) is required; the display tools are optional.
+Clicking the brightness, volume or clock segment opens one combined GTK 3
+popup, `dwmstatus-popup`, under the pointer. It contains a brightness slider, a
+volume slider with a mute button, and a calendar. Each section is labelled with
+a Nerd Font icon (sun, volume, calendar); the volume icon follows the level, and
+the clicked section is highlighted and focused. Clicking any of those segments
+again closes the popup, as do `Esc`, `Return` and clicking elsewhere. Sections
+without a working backend are hidden, and the calendar is always available.
 
-`dwmstatus-volume` and `dwmstatus-brightness` show interactive GTK 3 sliders;
-both use the shared `dwmstatus-slider` helper and need Python 3, PyGObject and
-GTK 3 (Arch packages `python`, `python-gobject`, `gtk3`). Volume changes go
-through `wpctl` (PipeWire) or `pactl` (PulseAudio); brightness goes through
-`brightnessctl` or a writable sysfs backlight. Moving the volume slider while
-muted also unmutes. Clicking the same segment again closes the open popup.
-The command line modes work without GTK:
+The popup needs Python 3, PyGObject and GTK 3 (Arch packages `python`,
+`python-gobject`, `gtk3`). Volume changes go through `wpctl` (PipeWire) or
+`pactl` (PulseAudio); brightness goes through `brightnessctl` or a writable
+sysfs backlight. Moving the volume slider while muted also unmutes.
+
+`dwmstatus-volume` and `dwmstatus-brightness` remain as single-control sliders
+(and thin wrappers around the shared `dwmstatus-slider`); `dwmstatus-calendar`
+still shows the month as a notification for setups that prefer that. Their
+command line modes work without GTK:
 `dwmstatus-volume --get|--set PERCENT|--mute|--unmute|--toggle-mute` and
 `dwmstatus-brightness --get|--set PERCENT`.
 
@@ -79,15 +85,15 @@ make install
 Example `config.h`:
 
 ```c
-static const char *calendarcmd[]   = { "dwmstatus-calendar", NULL };
-static const char *volumecmd[]     = { "dwmstatus-volume", NULL };
-static const char *brightnesscmd[] = { "dwmstatus-brightness", NULL };
+static const char *popuptimcmd[] = { "dwmstatus-popup", "tim", NULL };
+static const char *popupvolcmd[] = { "dwmstatus-popup", "vol", NULL };
+static const char *popupbricmd[] = { "dwmstatus-popup", "bri", NULL };
 
 static const Button buttons[] = {
 	/* ... */
-	{ ClkStatusText, 0, Button1, spawn, {.v = calendarcmd },   "tim" },
-	{ ClkStatusText, 0, Button1, spawn, {.v = volumecmd },     "vol" },
-	{ ClkStatusText, 0, Button1, spawn, {.v = brightnesscmd }, "bri" },
+	{ ClkStatusText, 0, Button1, spawn, {.v = popuptimcmd }, "tim" },
+	{ ClkStatusText, 0, Button1, spawn, {.v = popupvolcmd }, "vol" },
+	{ ClkStatusText, 0, Button1, spawn, {.v = popupbricmd }, "bri" },
 	{ ClkStatusText, 0, Button3, spawn, {.v = termcmd } },
 	/* ... */
 };

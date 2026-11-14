@@ -30,6 +30,22 @@ Cetak versi lalu keluar.
 .TP
 .B DWMSTATUS_TZ
 Zona waktu yang dipakai untuk jam (default: Asia/Jakarta).
+.SH POPUP
+Skrip
+.B dwmstatus-popup
+menampilkan satu popup GTK 3 gabungan di bawah kursor: slider kecerahan,
+slider volume dengan tombol mute, dan kalender.
+Argumen opsional
+.BR bri ", " vol " atau " tim
+menyorot dan memfokuskan bagian yang sesuai dengan indikator yang diklik.
+Setiap bagian diberi ikon Nerd Font: matahari untuk kecerahan, ikon volume
+yang mengikuti level, dan kalender.
+Bagian yang tidak memiliki backend yang berfungsi akan disembunyikan.
+Klik lagi pada bagian yang sama, tombol
+.BR Esc ,
+.BR Return ,
+atau klik di luar popup akan menutupnya.
+Popup memerlukan Python 3, PyGObject, dan GTK 3.
 .SH KALENDER
 Skrip
 .B dwmstatus-calendar
@@ -42,7 +58,9 @@ dengan fallback ke
 .BR st (1)
 atau
 .BR dmenu (1).
-Skrip ini dipanggil oleh
+Ini adalah alternatif notifikasi dari kalender di
+.BR dwmstatus-popup .
+Skrip ini dapat dipanggil oleh
 .BR dwm (1)
 melalui pengikatan tombol pada teks status; lihat README untuk contoh.
 .SH SLIDER
@@ -50,9 +68,11 @@ Skrip
 .B dwmstatus-volume
 dan
 .B dwmstatus-brightness
-menampilkan slider GTK 3 di bawah kursor untuk volume dan kecerahan.
-Keduanya memakai skrip bersama
-.BR dwmstatus-slider .
+menampilkan slider GTK 3 satu kontrol di bawah kursor untuk volume dan
+kecerahan.
+Keduanya adalah pembungkus tipis untuk skrip bersama
+.BR dwmstatus-slider ,
+dan tetap tersedia untuk pemakaian mandiri.
 Perubahan volume dikirim ke sink audio default melalui
 .BR wpctl (1)
 atau

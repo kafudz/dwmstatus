@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+"""dwmstatus-popup - combined brightness, volume and calendar popup.
+
+A left click on the status bar opens this window.  Passing "bri", "vol" or
+"tim" (the segment names published by dwmstatus) focuses the matching
+section, so clicking an indicator opens the popup at that control.
+
+Sections that have no working backend are hidden.  The calendar always works.
+"""
+
+import datetime
+import fcntl
+import os
+import signal
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+for _path in (HERE, os.path.join(HERE, os.pardir, "lib", "dwmstatus")):
+    if os.path.isfile(os.path.join(_path, "dwmstatus_lib.py")):
+        sys.path.insert(0, _path)
+        break
+
+try:
+    import dwmstatus_lib as backend
+except ImportError:
+    sys.exit("dwmstatus-popup: dwmstatus_lib.py not found "
+             "(run 'make install' from the dwmstatus repo)")
+
+ICON_BRIGHTNESS = "\uf185"  # nf-fa-sun_o
+ICON_VOL_OFF = "\uf026"     # nf-fa-volume_off
+ICON_VOL_LOW = "\uf027"     # nf-fa-volume_down
+ICON_VOL_HIGH = "\uf028"    # nf-fa-volume_up
+ICON_CALENDAR = "\uf073"    # nf-fa-calendar
+
+CSS = """
+.dwmstatus-icon {
+    font-family: "JetBrainsMono Nerd Font", "Symbols Nerd Font", monospace;
+    font-size: 18px;
+}
+.dwmstatus-title {
+    font-weight: bold;
+}
+.dwmstatus-active {
+    background-color: rgba(53, 132, 228, 0.18);
+    border-radius: 8px;
+}
+"""
+
+
+def popup_lock():
+    """Claim the single-instance lock, or close the open popup and exit."""
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+    path = os.path.join(runtime, f"dwmstatus-popup-{os.getuid()}.lock")
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            pid = int(os.read(fd, 32).decode().strip())
+            if pid > 1:
+                os.kill(pid, signal.SIGTERM)
+        except (OSError, ValueError):
+            pass
+        os.close(fd)
+        return None
+    os.ftruncate(fd, 0)
+    os.write(fd, str(os.getpid()).encode())
+    return fd
+
+
+def popup(initial):
+    lock = popup_lock()
+    if lock is None:
+        return 0
+
+    try:
+        import gi
+        gi.require_version("Gdk", "3.0")
+        gi.require_version("Gtk", "3.0")
+        from gi.repository import Gdk, GLib, Gtk
+    except (ImportError, ValueError) as error:
+        print(f"dwmstatus-popup: GTK 3 / PyGObject unavailable: {error}",
+              file=sys.stderr)
+        return 1
+
+    provider = Gtk.CssProvider()
+    provider.load_from_data(CSS)
+    Gtk.StyleContext.add_provider_for_screen(
+        Gdk.Screen.get_default(), provider,
+        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+    GLib.set_prgname("dwmstatus-popup")
+    Gdk.set_program_class("dwmstatus-popup")
+
+    win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+    win.set_title("dwmstatus")
+    win.set_decorated(False)
+    win.set_resizable(False)
+    win.set_border_width(14)
+    win.set_skip_taskbar_hint(True)
+    win.set_skip_pager_hint(True)
+    win.set_keep_above(True)
+    win.set_type_hint(Gdk.WindowTypeHint.DIALOG)
+
+    content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+
+    def icon(char):
+        label = Gtk.Label(label=char)
+        label.get_style_context().add_class("dwmstatus-icon")
+        label.set_valign(Gtk.Align.CENTER)
+        return label
+
+    def heading(icon_char, text, value_label=None):
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        name = Gtk.Label(label=text, xalign=0)
+        name.get_style_context().add_class("dwmstatus-title")
+        head.pack_start(icon(icon_char), False, False, 0)
+        head.pack_start(name, True, True, 0)
+        if value_label is not None:
+            head.pack_end(value_label, False, False, 0)
+        return head
+
+    def slider():
+        scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+        scale.set_draw_value(False)
+        scale.set_size_request(280, -1)
+        return scale
+
+    sections = {}
+    pending = {}
+    shown_at = [0]
+
+    # --- brightness -------------------------------------------------------
+    bri_backend = backend.detect_brightness()
+    bri_state = backend.brightness_state(bri_backend) if bri_backend else None
+    bri_scale = None
+    if bri_state is not None:
+        bri_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        bri_box.set_border_width(6)
+        bri_value = Gtk.Label(label=f"{bri_state[0]}%", xalign=1)
+        bri_scale = slider()
+        bri_scale.set_value(bri_state[0])
+
+        def apply_brightness():
+            pending.pop("bri", None)
+            level = int(round(bri_scale.get_value()))
+            backend.set_brightness(bri_backend, level)
+            bri_value.set_text(f"{level}%")
+            return False
+
+        def on_brightness(widget):
+            bri_value.set_text(f"{int(round(widget.get_value()))}%")
+            if "bri" in pending:
+                GLib.source_remove(pending["bri"])
+            pending["bri"] = GLib.timeout_add(60, apply_brightness)
+
+        bri_scale.connect("value-changed", on_brightness)
+        bri_box.pack_start(heading(ICON_BRIGHTNESS, "Brightness", bri_value),
+                           False, False, 0)
+        bri_box.pack_start(bri_scale, False, False, 0)
+        content.pack_start(bri_box, False, False, 0)
+        sections["bri"] = (bri_box, bri_scale)
+
+    # --- volume -----------------------------------------------------------
+    vol_backend = backend.detect_volume()
+    vol_state = backend.volume_state(vol_backend) if vol_backend else None
+    vol_scale = None
+    if vol_state is not None:
+        if bri_state is not None:
+            content.pack_start(Gtk.Separator(), False, False, 0)
+        vol_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        vol_box.set_border_width(6)
+        vol_value = Gtk.Label(label=f"{vol_state[0]}%", xalign=1)
+        vol_icon = icon(ICON_VOL_HIGH)
+        vol_scale = slider()
+        vol_scale.set_value(vol_state[0])
+        muted_now = [bool(vol_state[1])]
+        mute = Gtk.Button(label="Unmute" if muted_now[0] else "Mute")
+
+        def update_volume_icon():
+            level = int(round(vol_scale.get_value()))
+            if muted_now[0] or level == 0:
+                glyph = ICON_VOL_OFF
+            elif level < 50:
+                glyph = ICON_VOL_LOW
+            else:
+                glyph = ICON_VOL_HIGH
+            vol_icon.set_text(glyph)
+
+        update_volume_icon()
+
+        def apply_volume():
+            pending.pop("vol", None)
+            level = int(round(vol_scale.get_value()))
+            if muted_now[0]:
+                backend.set_mute(vol_backend, False)
+                muted_now[0] = False
+                mute.set_label("Mute")
+            backend.set_volume(vol_backend, level)
+            vol_value.set_text(f"{level}%")
+            update_volume_icon()
+            return False
+
+        def on_volume(widget):
+            vol_value.set_text(f"{int(round(widget.get_value()))}%")
+            update_volume_icon()
+            if "vol" in pending:
+                GLib.source_remove(pending["vol"])
+            pending["vol"] = GLib.timeout_add(60, apply_volume)
+
+        def on_mute(button):
+            muted_now[0] = not muted_now[0]
+            backend.set_mute(vol_backend, muted_now[0])
+            button.set_label("Unmute" if muted_now[0] else "Mute")
+            update_volume_icon()
+
+        vol_scale.connect("value-changed", on_volume)
+        mute.connect("clicked", on_mute)
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        name = Gtk.Label(label="Volume", xalign=0)
+        name.get_style_context().add_class("dwmstatus-title")
+        head.pack_start(vol_icon, False, False, 0)
+        head.pack_start(name, True, True, 0)
+        head.pack_end(vol_value, False, False, 0)
+        vol_box.pack_start(head, False, False, 0)
+        vol_box.pack_start(vol_scale, False, False, 0)
+        vol_box.pack_start(mute, False, False, 0)
+        content.pack_start(vol_box, False, False, 0)
+        sections["vol"] = (vol_box, vol_scale)
+
+    # --- calendar ---------------------------------------------------------
+    today = datetime.date.today()
+    cal_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    cal_box.set_border_width(6)
+    cal_value = Gtk.Label(label=today.strftime("%a, %d %b %Y"), xalign=1)
+    calendar = Gtk.Calendar()
+    calendar.select_month(today.month - 1, today.year)
+
+    def on_day_selected(widget):
+        year, month, day = widget.get_date()
+        selected = datetime.date(year, month + 1, day)
+        cal_value.set_text(selected.strftime("%a, %d %b %Y"))
+
+    calendar.connect("day-selected", on_day_selected)
+
+    cal_box.pack_start(heading(ICON_CALENDAR, "Calendar", cal_value),
+                       False, False, 0)
+    cal_box.pack_start(calendar, False, False, 0)
+    content.pack_start(Gtk.Separator(), False, False, 0)
+    content.pack_start(cal_box, False, False, 0)
+    sections["tim"] = (cal_box, calendar)
+
+    win.add(content)
+
+    def on_key_press(widget, event):
+        if event.keyval in (Gdk.KEY_Escape, Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            win.destroy()
+            return True
+        return False
+
+    def on_focus_out(widget, event):
+        # Ignore the focus transition caused by mapping the popup itself.
+        if GLib.get_monotonic_time() - shown_at[0] > 200000:
+            win.destroy()
+        return False
+
+    win.connect("key-press-event", on_key_press)
+    win.connect("focus-out-event", on_focus_out)
+    win.connect("destroy", Gtk.main_quit)
+
+    win.show_all()
+    win.present()
+
+    # Place the popup under the click, on the monitor that owns the pointer.
+    display = Gdk.Display.get_default()
+    seat = display.get_default_seat()
+    pointer = seat.get_pointer()
+    _, px, py = pointer.get_position()
+    monitor = display.get_monitor_at_point(px, py) or display.get_primary_monitor()
+    if monitor is not None:
+        geometry = monitor.get_geometry()
+        width, height = win.get_size()
+        x = min(max(px - width // 2, geometry.x + 8),
+                geometry.x + geometry.width - width - 8)
+        y = py + 24
+        if y + height > geometry.y + geometry.height - 8:
+            y = geometry.y + geometry.height - height - 8
+        win.move(x, y)
+
+    # Emphasise and focus the section the clicked segment belongs to.  This
+    # has to happen after present(), otherwise the window focus chain wins.
+    if initial in sections:
+        box, widget = sections[initial]
+        box.get_style_context().add_class("dwmstatus-active")
+        widget.grab_focus()
+    elif sections:
+        next(iter(sections.values()))[1].grab_focus()
+
+    shown_at[0] = GLib.get_monotonic_time()
+    Gtk.main()
+    return 0
+
+
+def usage(stream=sys.stderr):
+    print("usage: dwmstatus-popup [bri|vol|tim]", file=stream)
+    return 2
+
+
+def main():
+    argv = sys.argv[1:]
+    if not argv:
+        return popup(None)
+    if argv[0] in ("-h", "--help"):
+        usage(sys.stdout)
+        return 0
+    if len(argv) == 1 and argv[0] in ("bri", "vol", "tim"):
+        return popup(argv[0])
+    return usage()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
