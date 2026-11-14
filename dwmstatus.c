@@ -631,7 +631,7 @@ get_capslock(char *buf, size_t size)
 
 /* Invisible gap between bar icons (no pipe separator; keep in sync with
  * STATUSSEP in dwm.c). */
-#define SEGSEP "    "
+#define SEGSEP "  "
 
 static size_t
 append(char *dst, size_t size, size_t len, const char *seg)
