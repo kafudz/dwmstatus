@@ -56,7 +56,7 @@ patch in this setup maps a click to the segment under the pointer.
 Clicking an icon opens one combined GTK 3 popup, `dwmstatus-popup`, focused on
 the matching section: brightness, volume, battery, or the calendar/clock. The
 Caps Lock icon also opens the clock section. The popup always appears at a fixed
-position: 40 px from the top and 10 px from the right edge of the monitor. Its
+position: 40 px from the top and 15 px from the right edge of the monitor. Its
 window title is `status`, so dwm's title area does not mark the popup as
 `broken` while it is open.
 

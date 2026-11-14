@@ -75,6 +75,10 @@ CSS = """
     min-height: 6px;
     background-color: transparent;
 }
+.dwmstatus-nav {
+    min-width: 32px;
+    padding: 2px 8px;
+}
 """
 
 
@@ -330,16 +334,49 @@ def popup(initial):
     cal_box.set_border_width(6)
     cal_value = Gtk.Label(label=date_text(today), xalign=1)
     calendar = Gtk.Calendar()
+    calendar.set_display_options(Gtk.CalendarDisplayOptions.SHOW_DAY_NAMES)
     calendar.select_month(today.month - 1, today.year)
+
+    # Own month header instead of GtkCalendar's built-in one, so the < and >
+    # buttons can have breathing room around them.
+    nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+    nav.set_border_width(2)
+    month_label = Gtk.Label(xalign=0.5)
+    month_label.get_style_context().add_class("dwmstatus-title")
+    prev_month = Gtk.Button(label="<")
+    next_month = Gtk.Button(label=">")
+    for button in (prev_month, next_month):
+        button.get_style_context().add_class("dwmstatus-nav")
+    nav.pack_start(prev_month, False, False, 0)
+    nav.pack_start(month_label, True, True, 0)
+    nav.pack_end(next_month, False, False, 0)
+
+    def update_month_label():
+        year, month, _ = calendar.get_date()
+        month_label.set_text(
+            datetime.date(year, month + 1, 1).strftime("%B %Y"))
+
+    def shift_month(delta):
+        year, month, _ = calendar.get_date()
+        month += delta
+        year += month // 12
+        month %= 12
+        calendar.select_month(month, year)
+        update_month_label()
 
     def on_day_selected(widget):
         year, month, day = widget.get_date()
         cal_value.set_text(date_text(datetime.date(year, month + 1, day)))
 
+    prev_month.connect("clicked", lambda _button: shift_month(-1))
+    next_month.connect("clicked", lambda _button: shift_month(1))
+    calendar.connect("month-changed", lambda _calendar: update_month_label())
     calendar.connect("day-selected", on_day_selected)
+    update_month_label()
 
     cal_box.pack_start(heading(ICON_CALENDAR, "Calendar", cal_value),
                        False, False, 0)
+    cal_box.pack_start(nav, False, False, 0)
     cal_box.pack_start(calendar, False, False, 0)
     if sections:
         content.pack_start(Gtk.Separator(), False, False, 0)
@@ -367,7 +404,7 @@ def popup(initial):
     win.show_all()
     win.present()
 
-    # Static position: 40 px from the top and 10 px from the right edge of the
+    # Static position: 40 px from the top and 15 px from the right edge of the
     # monitor that owns the pointer. The popup no longer follows the mouse.
     display = Gdk.Display.get_default()
     seat = display.get_default_seat()
@@ -377,7 +414,7 @@ def popup(initial):
     if monitor is not None:
         geometry = monitor.get_geometry()
         width, height = win.get_size()
-        x = geometry.x + geometry.width - width - 10
+        x = geometry.x + geometry.width - width - 15
         y = geometry.y + 40
         if y + height > geometry.y + geometry.height - 10:
             y = geometry.y + geometry.height - height - 10
