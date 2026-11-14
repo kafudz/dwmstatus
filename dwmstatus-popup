@@ -82,6 +82,13 @@ CSS = """
     min-width: 32px;
     padding: 2px 8px;
 }
+.dwmstatus-month {
+    background-color: #2b2b2b;
+    border: 1px solid alpha(currentColor, 0.35);
+    border-radius: 4px;
+    padding: 3px 12px;
+    min-width: 150px;
+}
 """
 
 
@@ -348,6 +355,7 @@ def popup(initial):
     nav.set_border_width(2)
     month_label = Gtk.Label(xalign=0.5)
     month_label.get_style_context().add_class("dwmstatus-title")
+    month_label.get_style_context().add_class("dwmstatus-month")
     prev_month = Gtk.Button(label="<")
     next_month = Gtk.Button(label=">")
     for button in (prev_month, next_month):
