@@ -422,6 +422,8 @@ def popup(initial):
 
     # Static position: 40 px from the top and 15 px from the right edge of the
     # monitor that owns the pointer. The popup no longer follows the mouse.
+    # dwm also places it there when it manages the window, so the popup never
+    # appears at the centre first.
     display = Gdk.Display.get_default()
     seat = display.get_default_seat()
     pointer = seat.get_pointer()

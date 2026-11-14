@@ -99,7 +99,6 @@ static const Button buttons[] = {
 	{ ClkStatusText, 0, Button1, spawn, {.v = popupvolcmd }, "vol" },
 	{ ClkStatusText, 0, Button1, spawn, {.v = popupbatcmd }, "bat" },
 	{ ClkStatusText, 0, Button1, spawn, {.v = popuptimcmd }, "caps" },
-	{ ClkStatusText, 0, Button3, spawn, {.v = termcmd } },
 	/* ... */
 };
 ```
