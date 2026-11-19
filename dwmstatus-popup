@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
-"""dwmstatus-popup - combined brightness, volume, battery, clock and calendar popup.
+"""dwmstatus-popup - combined power, network, Bluetooth, brightness, volume,
+battery, clock and calendar popup.
 
-A left click on the status bar opens this window.  Passing "bri", "vol",
-"bat", or "tim" (the segment names published by dwmstatus) focuses the
-matching section, so clicking an indicator opens the popup at that control.
+A left click on a segment of the dwmstatus panel opens this window.  Passing
+"pwr", "net", "bt", "bri", "vol", "bat" or "tim" focuses the matching section,
+so clicking an indicator opens the popup at that control.
 
-Sections that have no working backend are hidden.  The calendar always works.
+Sections that have no working backend are hidden (no NetworkManager, no
+Bluetooth controller, ...).  The calendar always works.
+
+When the panel starts the popup it sets DWMSTATUS_PANEL="x,y,w,h"; the popup
+then opens right below the panel (above it for a bottom bar), aligned to its
+right edge.  Without it the popup appears 40 px from the top and 15 px from
+the right edge of the monitor.
 """
 
 import datetime
@@ -13,6 +20,7 @@ import fcntl
 import os
 import signal
 import sys
+import threading
 import time
 
 sys.dont_write_bytecode = True  # keep __pycache__ out of the repo
@@ -48,6 +56,25 @@ ICON_BAT_EMPTY = "\uf244"   # nf-fa-battery_empty
 ICON_BOLT = "\uf0e7"        # nf-fa-bolt
 ICON_CALENDAR = "\uf073"    # nf-fa-calendar
 ICON_CLOCK = "\uf017"       # nf-fa-clock_o
+ICON_WIFI = "\uf1eb"        # nf-fa-wifi
+ICON_BLUETOOTH = "\uf293"   # nf-fa-bluetooth
+ICON_LOCKED = "\uf023"      # nf-fa-lock (secured Wi-Fi network)
+ICON_POWER = "\uf011"       # nf-fa-power_off
+ICON_LOCK = "\uf023"        # nf-fa-lock
+ICON_LOGOUT = "\uf08b"      # nf-fa-sign_out
+ICON_SUSPEND = "\uf186"     # nf-fa-moon_o
+ICON_REBOOT = "\uf021"      # nf-fa-refresh
+
+# action -> (icon, label); order is the order of the buttons
+POWER_BUTTONS = {
+    "lock": (ICON_LOCK, "Lock"),
+    "logout": (ICON_LOGOUT, "Log out"),
+    "suspend": (ICON_SUSPEND, "Suspend"),
+    "reboot": (ICON_REBOOT, "Reboot"),
+    "poweroff": (ICON_POWER, "Power off"),
+}
+# these ask "are you sure?" first; lock and suspend are harmless
+POWER_CONFIRM = ("logout", "reboot", "poweroff")
 
 CSS = """
 #dwmstatus-popup {
@@ -77,6 +104,14 @@ CSS = """
 .dwmstatus-level block.empty {
     min-height: 6px;
     background-color: transparent;
+}
+.dwmstatus-small {
+    font-size: 11px;
+    opacity: 0.75;
+}
+.dwmstatus-error {
+    color: #e5484d;
+    font-size: 11px;
 }
 .dwmstatus-nav {
     min-width: 32px;
@@ -126,7 +161,8 @@ def popup(initial):
         import gi
         gi.require_version("Gdk", "3.0")
         gi.require_version("Gtk", "3.0")
-        from gi.repository import Gdk, GLib, Gtk
+        gi.require_version("Pango", "1.0")
+        from gi.repository import Gdk, GLib, Gtk, Pango
     except (ImportError, ValueError) as error:
         print(f"dwmstatus-popup: GTK 3 / PyGObject unavailable: {error}",
               file=sys.stderr)
@@ -182,6 +218,64 @@ def popup(initial):
     sections = {}
     pending = {}
     shown_at = [0]
+    alive = [True]
+    start_hidden = []  # containers hidden once the first show_all() is done
+
+    def background(work, done=None):
+        """Run work() in a thread, then done(result) on the GTK main loop.
+
+        nmcli/bluetoothctl can take seconds; this keeps the popup responsive.
+        A failing backend gives done(None) and never takes the popup down.
+        """
+        def runner():
+            try:
+                result = work()
+            except Exception:
+                result = None
+            if done is not None:
+                def finish():
+                    if alive[0]:
+                        done(result)
+                    return False
+                GLib.idle_add(finish)
+
+        threading.Thread(target=runner, daemon=True).start()
+
+    # Where to put the popup: under the panel (above it for a bottom bar),
+    # right edges aligned; the pointer's monitor when there is no panel info.
+    anchor = None
+    try:
+        ax, ay, aw, ah = (int(v) for v in
+                          os.environ.get("DWMSTATUS_PANEL", "").split(","))
+        anchor = (ax, ay, aw, ah)
+    except ValueError:
+        pass
+
+    display = Gdk.Display.get_default()
+    if anchor:
+        monitor = display.get_monitor_at_point(ax + aw // 2, ay + ah // 2)
+    else:
+        _, pointer_x, pointer_y = \
+            display.get_default_seat().get_pointer().get_position()
+        monitor = display.get_monitor_at_point(pointer_x, pointer_y)
+    monitor = monitor or display.get_primary_monitor()
+    geometry = monitor.get_geometry() if monitor is not None else None
+
+    gap = 6
+    # below: popup's top edge is `edge`; otherwise its bottom edge is `edge`
+    place = {"below": True, "edge": 40, "right": None, "avail": 600}
+    if geometry is not None:
+        if anchor and ay + ah // 2 > geometry.y + geometry.height // 2:
+            place["below"] = False
+            place["edge"] = ay - gap
+            place["right"] = ax + aw
+            place["avail"] = place["edge"] - geometry.y - 10
+        else:
+            place["edge"] = (ay + ah + gap) if anchor else geometry.y + 40
+            place["right"] = (ax + aw) if anchor \
+                else geometry.x + geometry.width - 15
+            place["avail"] = geometry.y + geometry.height - place["edge"] - 10
+    place["avail"] = max(240, place["avail"])
 
     # --- clock (live) -----------------------------------------------------
     clock_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -199,6 +293,365 @@ def popup(initial):
     tick_clock()
     GLib.timeout_add_seconds(1, tick_clock)
     content.pack_start(Gtk.Separator(), False, False, 0)
+
+    def message_label():
+        """A small red line for errors; hidden until there is something."""
+        label = Gtk.Label(xalign=0)
+        label.set_line_wrap(True)
+        label.set_max_width_chars(38)
+        label.get_style_context().add_class("dwmstatus-error")
+        label.set_no_show_all(True)
+        return label
+
+    def show_message(label, text):
+        label.set_text(text)
+        if text:
+            label.show()
+        else:
+            label.hide()
+
+    def listing_row(name, detail=None, glyph=None):
+        """Content of a list button: [icon] name ........ detail."""
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        label = Gtk.Label(label=name, xalign=0)
+        label.set_ellipsize(Pango.EllipsizeMode.END)
+        label.set_max_width_chars(26)
+        row.pack_start(label, True, True, 0)
+        if glyph:
+            row.pack_end(Gtk.Label(label=glyph), False, False, 0)
+        if detail:
+            small = Gtk.Label(label=detail)
+            small.get_style_context().add_class("dwmstatus-small")
+            row.pack_end(small, False, False, 0)
+        return row
+
+    def clear(box):
+        for child in box.get_children():
+            box.remove(child)
+
+    # --- power ------------------------------------------------------------
+    power_actions = [a for a in POWER_BUTTONS if backend.power_available(a)]
+    if power_actions:
+        pwr_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        pwr_box.set_border_width(6)
+        uptime = backend.uptime_text()
+        pwr_value = Gtk.Label(label=f"up {uptime}" if uptime else "", xalign=1)
+        pwr_box.pack_start(heading(ICON_POWER, "Power", pwr_value),
+                           False, False, 0)
+
+        stack = Gtk.Stack()
+        stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        buttons_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                              spacing=6)
+        buttons_row.set_homogeneous(True)
+
+        confirm_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        confirm_label = Gtk.Label(label="", xalign=0.5)
+        confirm_label.get_style_context().add_class("dwmstatus-title")
+        confirm_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                              spacing=6)
+        confirm_row.set_homogeneous(True)
+        cancel_button = Gtk.Button(label="Cancel")
+        confirm_button = Gtk.Button(label="Confirm")
+        confirm_row.pack_start(cancel_button, True, True, 0)
+        confirm_row.pack_start(confirm_button, True, True, 0)
+        confirm_box.pack_start(confirm_label, False, False, 0)
+        confirm_box.pack_start(confirm_row, False, False, 0)
+        chosen = [None]
+        first_power_button = []
+
+        def do_power(action):
+            backend.run_power(action)
+            win.destroy()
+
+        def on_power(button, action):
+            if action in POWER_CONFIRM:
+                chosen[0] = action
+                confirm_label.set_text(f"{POWER_BUTTONS[action][1]} now?")
+                stack.set_visible_child_name("confirm")
+                cancel_button.grab_focus()  # Return must not confirm by accident
+            else:
+                do_power(action)
+
+        def on_confirm(button):
+            if chosen[0]:
+                do_power(chosen[0])
+
+        def on_cancel(button):
+            chosen[0] = None
+            stack.set_visible_child_name("buttons")
+
+        confirm_button.connect("clicked", on_confirm)
+        cancel_button.connect("clicked", on_cancel)
+
+        for action in power_actions:
+            glyph, text = POWER_BUTTONS[action]
+            inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            glyph_label = Gtk.Label(label=glyph)
+            glyph_label.get_style_context().add_class("dwmstatus-icon")
+            caption = Gtk.Label(label=text)
+            caption.get_style_context().add_class("dwmstatus-small")
+            inner.pack_start(glyph_label, False, False, 0)
+            inner.pack_start(caption, False, False, 0)
+            button = Gtk.Button()
+            button.add(inner)
+            button.set_tooltip_text(text)
+            button.connect("clicked", on_power, action)
+            buttons_row.pack_start(button, True, True, 0)
+            first_power_button.append(button)
+
+        stack.add_named(buttons_row, "buttons")
+        stack.add_named(confirm_box, "confirm")
+        pwr_box.pack_start(stack, False, False, 0)
+        content.pack_start(pwr_box, False, False, 0)
+        sections["pwr"] = (pwr_box, first_power_button[0])
+
+    # --- network (NetworkManager) -----------------------------------------
+    net_state = [None]
+    if backend.nm_available():
+        if sections:
+            content.pack_start(Gtk.Separator(), False, False, 0)
+        net_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        net_box.set_border_width(6)
+        net_value = Gtk.Label(label="…", xalign=1)
+        net_value.set_ellipsize(Pango.EllipsizeMode.END)
+        net_value.set_max_width_chars(24)
+        net_box.pack_start(heading(ICON_WIFI, "Network", net_value),
+                           False, False, 0)
+
+        net_ip = Gtk.Label(label="", xalign=0)
+        net_ip.get_style_context().add_class("dwmstatus-small")
+        net_ip.set_no_show_all(True)
+        net_box.pack_start(net_ip, False, False, 0)
+
+        wifi_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        start_hidden.append(wifi_row)
+        wifi_switch = Gtk.Switch()
+        wifi_switch.set_valign(Gtk.Align.CENTER)
+        wifi_row.pack_start(Gtk.Label(label="Wi-Fi", xalign=0),
+                            True, True, 0)
+        wifi_row.pack_end(wifi_switch, False, False, 0)
+        net_box.pack_start(wifi_row, False, False, 0)
+
+        wifi_expander = Gtk.Expander(label="Wi-Fi networks")
+        start_hidden.append(wifi_expander)
+        wifi_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        wifi_expander.add(wifi_list)
+        net_box.pack_start(wifi_expander, False, False, 0)
+
+        pw_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        start_hidden.append(pw_row)
+        pw_entry = Gtk.Entry()
+        pw_entry.set_visibility(False)
+        pw_entry.set_placeholder_text("Password")
+        pw_button = Gtk.Button(label="Connect")
+        pw_row.pack_start(pw_entry, True, True, 0)
+        pw_row.pack_end(pw_button, False, False, 0)
+        net_box.pack_start(pw_row, False, False, 0)
+
+        net_message = message_label()
+        net_box.pack_start(net_message, False, False, 0)
+
+        wifi_guard = [False]    # True while we set the switch ourselves
+        pw_target = [None]      # SSID the password row is for
+
+        def refresh_net():
+            def work():
+                state = backend.nm_state()
+                networks = backend.nm_wifi_list() \
+                    if state and state["wifi"] else []
+                ip = ""
+                for dev in (state["devices"] if state else []):
+                    if dev["state"] == "connected":
+                        ip = backend.nm_ip(dev["device"])
+                        break
+                return (state, networks, ip)
+
+            def done(result):
+                state, networks, ip = result if result else (None, [], "")
+                net_state[0] = state
+                net_value.set_text(backend.nm_summary(state))
+                net_ip.set_text(ip)
+                net_ip.set_visible(bool(ip))
+                has_wifi = bool(state) and state["wifi"] is not None
+                wifi_row.set_visible(has_wifi)
+                wifi_expander.set_visible(has_wifi)
+                wifi_guard[0] = True
+                wifi_switch.set_active(bool(state and state["wifi"]))
+                wifi_guard[0] = False
+                clear(wifi_list)
+                if not networks:
+                    text = "No networks found" if state and state["wifi"] \
+                        else "Wi-Fi is off"
+                    empty = Gtk.Label(label=text, xalign=0)
+                    empty.get_style_context().add_class("dwmstatus-small")
+                    wifi_list.pack_start(empty, False, False, 0)
+                for network in networks:
+                    button = Gtk.Button()
+                    button.set_relief(Gtk.ReliefStyle.NONE)
+                    name = ("✓ " if network["active"] else "") + network["ssid"]
+                    button.add(listing_row(
+                        name, f"{network['signal']}%",
+                        ICON_LOCKED if network["secure"] else None))
+                    button.connect("clicked", on_network, network)
+                    wifi_list.pack_start(button, False, False, 0)
+                wifi_list.show_all()
+
+            background(work, done)
+
+        def after_connect(network, result):
+            ok, text = result if result else (False, "failed")
+            if ok:
+                show_message(net_message, "")
+                pw_row.hide()
+                pw_entry.set_text("")
+            elif backend.needs_password(text):
+                pw_target[0] = network["ssid"]
+                show_message(net_message,
+                             f"Password needed for {network['ssid']}")
+                pw_row.show()
+                pw_entry.grab_focus()
+            else:
+                show_message(net_message, (text.splitlines() or ["failed"])[-1][:120])
+            refresh_net()
+
+        def connect_to(network, password=None):
+            show_message(net_message, "")
+            net_value.set_text(f"Connecting to {network['ssid']}…")
+            background(lambda: backend.nm_connect(network["ssid"], password),
+                       lambda result: after_connect(network, result))
+
+        def on_network(button, network):
+            if network["active"]:
+                state = net_state[0]
+                for dev in (state["devices"] if state else []):
+                    if dev["type"] == "wifi" and dev["state"] == "connected":
+                        background(lambda d=dev["device"]:
+                                   backend.nm_disconnect(d),
+                                   lambda _result: refresh_net())
+                        break
+                return
+            pw_row.hide()
+            connect_to(network)
+
+        def on_password(widget):
+            password = pw_entry.get_text()
+            if pw_target[0] and password:
+                connect_to({"ssid": pw_target[0]}, password)
+
+        def on_wifi_toggled(switch, _param):
+            if wifi_guard[0]:
+                return
+            wanted = switch.get_active()
+            background(lambda: backend.nm_set_wifi(wanted),
+                       lambda _result: GLib.timeout_add_seconds(
+                           2, lambda: (refresh_net(), False)[1]))
+
+        def on_wifi_expanded(expander, _param):
+            if expander.get_expanded():
+                # a fresh scan finishes a few seconds later; show it then
+                background(backend.nm_wifi_rescan,
+                           lambda _result: GLib.timeout_add_seconds(
+                               3, lambda: (refresh_net(), False)[1]))
+
+        wifi_switch.connect("notify::active", on_wifi_toggled)
+        wifi_expander.connect("notify::expanded", on_wifi_expanded)
+        pw_button.connect("clicked", on_password)
+        pw_entry.connect("activate", on_password)
+        content.pack_start(net_box, False, False, 0)
+        sections["net"] = (net_box, wifi_switch)
+        if initial == "net":
+            wifi_expander.set_expanded(True)
+        refresh_net()
+
+    # --- bluetooth (BlueZ) ------------------------------------------------
+    bt_info = backend.bt_state() if backend.bt_available() else None
+    if bt_info is not None:
+        if sections:
+            content.pack_start(Gtk.Separator(), False, False, 0)
+        bt_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        bt_box.set_border_width(6)
+        bt_value = Gtk.Label(label="On" if bt_info["powered"] else "Off",
+                             xalign=1)
+        bt_box.pack_start(heading(ICON_BLUETOOTH, "Bluetooth", bt_value),
+                          False, False, 0)
+
+        bt_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        bt_switch = Gtk.Switch()
+        bt_switch.set_valign(Gtk.Align.CENTER)
+        bt_row.pack_start(Gtk.Label(label="Power", xalign=0), True, True, 0)
+        bt_row.pack_end(bt_switch, False, False, 0)
+        bt_box.pack_start(bt_row, False, False, 0)
+
+        bt_expander = Gtk.Expander(label="Paired devices")
+        bt_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        bt_expander.add(bt_list)
+        bt_box.pack_start(bt_expander, False, False, 0)
+
+        bt_message = message_label()
+        bt_box.pack_start(bt_message, False, False, 0)
+        bt_guard = [False]
+
+        def refresh_bt():
+            def work():
+                state = backend.bt_state()
+                devices = backend.bt_devices() \
+                    if state and state["powered"] else []
+                return (state, devices)
+
+            def done(result):
+                state, devices = result if result else (None, [])
+                powered = bool(state and state["powered"])
+                bt_value.set_text("On" if powered else "Off")
+                bt_guard[0] = True
+                bt_switch.set_active(powered)
+                bt_guard[0] = False
+                clear(bt_list)
+                if not devices:
+                    text = "No paired devices" if powered \
+                        else "Bluetooth is off"
+                    empty = Gtk.Label(label=text, xalign=0)
+                    empty.get_style_context().add_class("dwmstatus-small")
+                    bt_list.pack_start(empty, False, False, 0)
+                for device in devices:
+                    button = Gtk.Button()
+                    button.set_relief(Gtk.ReliefStyle.NONE)
+                    button.add(listing_row(
+                        device["name"],
+                        "Connected" if device["connected"] else None))
+                    button.connect("clicked", on_bt_device, device)
+                    bt_list.pack_start(button, False, False, 0)
+                bt_list.show_all()
+
+            background(work, done)
+
+        def after_bt(result):
+            ok, text = result if result else (False, "failed")
+            show_message(bt_message, "" if ok else
+                         (text.splitlines() or ["failed"])[-1][:120])
+            refresh_bt()
+
+        def on_bt_device(button, device):
+            show_message(bt_message, "")
+            bt_value.set_text("Connecting…" if not device["connected"]
+                              else "Disconnecting…")
+            background(lambda: backend.bt_connect(
+                device["mac"], not device["connected"]), after_bt)
+
+        def on_bt_toggled(switch, _param):
+            if bt_guard[0]:
+                return
+            wanted = switch.get_active()
+            background(lambda: backend.bt_set_power(wanted),
+                       lambda _result: GLib.timeout_add_seconds(
+                           1, lambda: (refresh_bt(), False)[1]))
+
+        bt_switch.connect("notify::active", on_bt_toggled)
+        content.pack_start(bt_box, False, False, 0)
+        sections["bt"] = (bt_box, bt_switch)
+        if initial == "bt":
+            bt_expander.set_expanded(True)
+        refresh_bt()
 
     # --- brightness -------------------------------------------------------
     bri_backend = backend.detect_brightness()
@@ -399,7 +852,17 @@ def popup(initial):
     content.pack_start(cal_box, False, False, 0)
     sections["tim"] = (cal_box, calendar)
 
-    win.add(content)
+    # The popup got taller with the new sections.  Scroll instead of running
+    # off a small screen: it never gets taller than the room next to the panel.
+    scrolled = Gtk.ScrolledWindow()
+    scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    scrolled.set_shadow_type(Gtk.ShadowType.NONE)
+    scrolled.set_propagate_natural_height(True)
+    scrolled.set_max_content_height(place["avail"])
+    if hasattr(scrolled, "set_propagate_natural_width"):  # GTK >= 3.22
+        scrolled.set_propagate_natural_width(True)
+    scrolled.add(content)
+    win.add(scrolled)
 
     def on_key_press(widget, event):
         if event.keyval in (Gdk.KEY_Escape, Gdk.KEY_Return, Gdk.KEY_KP_Enter):
@@ -418,25 +881,31 @@ def popup(initial):
     win.connect("destroy", Gtk.main_quit)
 
     win.show_all()
+    for widget in start_hidden:
+        widget.hide()
     win.present()
 
-    # Static position: 40 px from the top and 15 px from the right edge of the
-    # monitor that owns the pointer. The popup no longer follows the mouse.
-    # dwm also places it there when it manages the window, so the popup never
-    # appears at the centre first.
-    display = Gdk.Display.get_default()
-    seat = display.get_default_seat()
-    pointer = seat.get_pointer()
-    _, px, py = pointer.get_position()
-    monitor = display.get_monitor_at_point(px, py) or display.get_primary_monitor()
-    if monitor is not None:
-        geometry = monitor.get_geometry()
+    last_position = [None]
+
+    def reposition(*_args):
+        """Right edge on the panel's right edge; below it (or above it)."""
+        if geometry is None or place["right"] is None:
+            return False
         width, height = win.get_size()
-        x = geometry.x + geometry.width - width - 15
-        y = geometry.y + 40
-        if y + height > geometry.y + geometry.height - 10:
-            y = geometry.y + geometry.height - height - 10
-        win.move(x, y)
+        x = max(geometry.x, place["right"] - width)
+        y = place["edge"] if place["below"] else place["edge"] - height
+        y = max(geometry.y, y)
+        if last_position[0] != (x, y):
+            last_position[0] = (x, y)
+            win.move(x, y)
+        return False
+
+    # dwm may also place the window itself when it manages it.  The popup
+    # grows and shrinks as the network and Bluetooth lists load; keep it
+    # glued to the panel (matters most for a bottom bar, where the top edge
+    # moves when the height changes).
+    win.connect("size-allocate", lambda *_a: GLib.idle_add(reposition))
+    reposition()
 
     # Focus the section the clicked segment belongs to (no visual highlight).
     # This has to happen after present(), otherwise the window focus chain wins.
@@ -451,7 +920,7 @@ def popup(initial):
 
 
 def usage(stream=sys.stderr):
-    print("usage: dwmstatus-popup [bri|vol|bat|tim]", file=stream)
+    print("usage: dwmstatus-popup [pwr|net|bt|bri|vol|bat|tim]", file=stream)
     return 2
 
 
@@ -462,7 +931,8 @@ def main():
     if argv[0] in ("-h", "--help"):
         usage(sys.stdout)
         return 0
-    if len(argv) == 1 and argv[0] in ("bri", "vol", "bat", "tim"):
+    if len(argv) == 1 and argv[0] in ("pwr", "net", "bt", "bri", "vol",
+                                      "bat", "tim"):
         return popup(argv[0])
     return usage()
 

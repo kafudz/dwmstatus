@@ -9,7 +9,7 @@ MANPREFIX = ${PREFIX}/share/man
 # includes and libs
 # (on BSD / old X11R6 layouts add -I/usr/X11R6/include and -L/usr/X11R6/lib)
 INCS = -I.
-LIBS = -lX11
+LIBS = -lX11 -lcairo
 
 # flags: optimised for speed, debug symbols stripped
 # NOTE: The backslashes before the quotes are strictly required:
