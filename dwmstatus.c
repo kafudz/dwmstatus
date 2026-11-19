@@ -1,19 +1,29 @@
 /*
-dwmstatus - status bar for dwm (based on 20h's dwmstatus)
-Requires a Nerd Font in dwm's config.h, e.g.
-static const char *fonts[] = { "JetBrainsMono Nerd Font:size=10" };
-Shows Nerd Font icons only, in this order: Caps Lock (while active), volume
-and battery. Percentages and the clock digits live in the combined popup
-(dwmstatus-popup).
-Optional runtime tool: wpctl (PipeWire) for volume.
-Battery is read straight from sysfs (no subprocess).
-Segments that are not available on the machine are hidden.
-The root window name is only updated when the status actually changes, so dwm
-does not redraw its bar twice per second for an identical string.
-The names of the visible segments are published in _DWMSTATUS_SEGMENTS so dwm
-can route a click on the bar to the segment under the pointer.
+dwmstatus - standalone status panel for dwm (based on 20h's dwmstatus)
 
-Build: gcc -O2 -Wall -o dwmstatus dwmstatus.c -lX11
+A small, polybar-style panel: its own X window, drawn with Cairo, that sits
+over the right end of dwm's bar. It does NOT write dwm's status text and needs
+no dwm patch; it handles its own clicks.
+
+Segments, left to right (a segment that is not available is hidden):
+    caps  Caps Lock (only while active)
+    net   network state (wired / Wi-Fi, from sysfs)
+    bt    Bluetooth (adapter present, rfkill, active connections, from sysfs)
+    vol   volume (wpctl)
+    bat   battery (sysfs)
+    pwr   power button
+
+A left click on a segment runs `dwmstatus-popup <name>`, the combined GTK
+popup (clock, network, Bluetooth, brightness, volume, battery, calendar and
+the power menu). The panel finds dwm's bar window (WM_CLASS dwm/dwm) and
+follows its position and height, so it also works with a bottom bar and hides
+while dwm's bar is hidden (showbar off).
+
+Requires a Nerd Font, e.g. "JetBrainsMono Nerd Font" (override with
+DWMSTATUS_FONT). Colours can be overridden with DWMSTATUS_BG, DWMSTATUS_FG,
+DWMSTATUS_DIM, DWMSTATUS_ACCENT, DWMSTATUS_WARN and DWMSTATUS_OK (#rrggbb).
+
+Build: see Makefile (needs cairo and X11).
 */
 
 #include <dirent.h>
@@ -25,28 +35,43 @@ Build: gcc -O2 -Wall -o dwmstatus dwmstatus.c -lX11
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 #include <X11/Xlib.h>
 #include <X11/XKBlib.h>
 #include <X11/Xatom.h>
+#include <X11/Xutil.h>
+#include <cairo/cairo.h>
+#include <cairo/cairo-xlib.h>
 
 #ifndef VERSION
 #define VERSION "unknown"
 #endif
 
-/*
- * Poll intervals (milliseconds). Raising VOLUME_INTERVAL_MS makes the daemon
- * even quieter; it costs one wpctl process per update.
- */
-#define UPDATE_INTERVAL_MS     500   /* Caps Lock */
-#define SYSFS_INTERVAL_MS     1000   /* battery */
-#define VOLUME_INTERVAL_MS    2000   /* spawning wpctl is the expensive part */
-#define VOLUME_TIMEOUT_MS      200   /* do not let a stuck wpctl freeze us */
-#define DISCOVERY_INTERVAL_MS 30000  /* re-scan sysfs for hotplugged devices */
+/* Intervals (milliseconds). Caps Lock is event driven and needs no polling. */
+#define TICK_INTERVAL_MS       1000  /* sysfs state, dwm bar geometry */
+#define VOLUME_INTERVAL_MS     2000  /* spawning wpctl is the expensive part */
+#define VOLUME_TIMEOUT_MS       200  /* do not let a stuck wpctl freeze us */
+#define DISCOVERY_INTERVAL_MS 30000  /* re-scan for hotplugged devices */
+#define BAR_RESCAN_TICKS         10  /* full search for dwm's bar window */
 
-#define PSDIR "/sys/class/power_supply"
+#define FALLBACK_HEIGHT 24           /* when dwm's bar cannot be found */
+
+/* sysfs locations; overridable with -D for testing against a fake tree */
+#ifndef PSDIR
+#define PSDIR  "/sys/class/power_supply"
+#endif
+#ifndef NETDIR
+#define NETDIR "/sys/class/net"
+#endif
+#ifndef BTDIR
+#define BTDIR  "/sys/class/bluetooth"
+#endif
+#ifndef RFKDIR
+#define RFKDIR "/sys/class/rfkill"
+#endif
 
 /* Nerd Font icons as UTF-8 byte sequences */
 #define ICON_VOL_OFF      "\xef\x80\xa6"  /* U+F026 nf-fa-volume_off */
@@ -58,12 +83,51 @@ Build: gcc -O2 -Wall -o dwmstatus dwmstatus.c -lX11
 #define ICON_BAT_1Q       "\xef\x89\x83"  /* U+F243 nf-fa-battery_quarter */
 #define ICON_BAT_EMPTY    "\xef\x89\x84"  /* U+F244 nf-fa-battery_empty */
 #define ICON_BOLT         "\xef\x83\xa7"  /* U+F0E7 nf-fa-bolt */
-#define ICON_CAPS_ON      "\xe2\x87\xaa"  /* U+21EA ⇪ CAPS LOCK */
+#define ICON_CAPS_ON      "\xe2\x87\xaa"  /* U+21EA CAPS LOCK */
+#define ICON_WIFI         "\xef\x87\xab"  /* U+F1EB nf-fa-wifi */
+#define ICON_WIRED        "\xef\x82\xac"  /* U+F0AC nf-fa-globe */
+#define ICON_BLUETOOTH    "\xef\x8a\x93"  /* U+F293 nf-fa-bluetooth */
+#define ICON_POWER        "\xef\x80\x91"  /* U+F011 nf-fa-power_off */
+
+enum { COL_BG, COL_FG, COL_DIM, COL_ACCENT, COL_WARN, COL_OK, NCOL };
+
+struct segment {
+    const char *name;   /* segment name (documentation / debugging) */
+    const char *arg;    /* argument passed to dwmstatus-popup */
+    char text[32];      /* UTF-8 icon(s); empty = hidden */
+    int color;
+    int x, w;           /* position inside the panel (valid after layout) */
+};
+
+static struct segment segs[] = {
+    { "caps", "tim", "", COL_FG, 0, 0 },
+    { "net",  "net", "", COL_FG, 0, 0 },
+    { "bt",   "bt",  "", COL_FG, 0, 0 },
+    { "vol",  "vol", "", COL_FG, 0, 0 },
+    { "bat",  "bat", "", COL_FG, 0, 0 },
+    { "pwr",  "pwr", "", COL_FG, 0, 0 },
+};
+#define NSEG (sizeof(segs) / sizeof(segs[0]))
+
+static double palette[NCOL][3] = {
+    { 0x10 / 255.0, 0x11 / 255.0, 0x13 / 255.0 }, /* bg: same as the popup */
+    { 0xe6 / 255.0, 0xe6 / 255.0, 0xe6 / 255.0 }, /* fg */
+    { 0x6b / 255.0, 0x6f / 255.0, 0x76 / 255.0 }, /* dim: off / muted */
+    { 0x35 / 255.0, 0x84 / 255.0, 0xe4 / 255.0 }, /* accent: active */
+    { 0xe5 / 255.0, 0x48 / 255.0, 0x4d / 255.0 }, /* warn: low battery */
+    { 0x3f / 255.0, 0xb9 / 255.0, 0x50 / 255.0 }, /* ok: charging */
+};
 
 static Display *dpy;
-static Window root;
-static Atom segatom; /* _DWMSTATUS_SEGMENTS, published for dwm's click handling */
+static Window root, win, barwin;
+static int screen;
+static cairo_surface_t *surf;
+static int xkb_ok, xkb_event_base;
 static volatile sig_atomic_t running = 1;
+
+/* current panel geometry and state */
+static int px, py, pw, ph, panel_mapped;
+static int font_h; /* bar height the fonts were built for */
 
 static void
 onsignal(int sig)
@@ -72,21 +136,16 @@ onsignal(int sig)
     running = 0;
 }
 
-/*
- * Publish the bar text and the names of the segments it contains. dwm reads
- * _DWMSTATUS_SEGMENTS to map a click to the segment under the pointer, so
- * one segment (for example "vol") can open a popup without making the whole
- * status text do the same thing.
- */
-static void
-setstatus(const char *str, const char *segments)
+/* Never let a stale window id (dwm bar gone) kill the panel. */
+static int
+xerror(Display *d, XErrorEvent *e)
 {
-    if (segatom != None)
-        XChangeProperty(dpy, root, segatom, XA_STRING, 8, PropModeReplace,
-                        (const unsigned char *)segments,
-                        (int)strlen(segments));
-    XStoreName(dpy, root, str);
-    XFlush(dpy);
+    (void)d;
+    if (e->error_code == BadWindow || e->error_code == BadDrawable)
+        return 0;
+    fprintf(stderr, "dwmstatus: X error %d (request %d)\n",
+            e->error_code, e->request_code);
+    return 0;
 }
 
 static int
@@ -166,6 +225,16 @@ read_long_attr(const char *dir, const char *name, long *out)
     return read_long_file(path, out);
 }
 
+static int
+path_exists(const char *dir, const char *name)
+{
+    char path[PATH_MAX];
+
+    if (join_path(path, sizeof(path), dir, name) < 0)
+        return 0;
+    return access(path, F_OK) == 0;
+}
+
 static long long
 now_ms(void)
 {
@@ -189,22 +258,7 @@ time_left_ms(long long deadline)
     return (int)left;
 }
 
-/* Signal-safe-ish sleep: wakes early on SIGINT/SIGTERM. */
-static void
-sleep_ms(long ms)
-{
-    struct timespec ts;
-
-    if (ms <= 0)
-        return;
-
-    ts.tv_sec = ms / 1000;
-    ts.tv_nsec = (ms % 1000) * 1000000L;
-    while (nanosleep(&ts, &ts) < 0) {
-        if (errno != EINTR || !running)
-            break;
-    }
-}
+/* ---------------------------------------------------------------- battery */
 
 /* Finds the first real system battery. 0 on success. */
 static int
@@ -289,13 +343,14 @@ battery_percent(const char *base)
 }
 
 static void
-get_battery(const char *base, char *buf, size_t size)
+get_battery(const char *base, char *buf, size_t size, int *color)
 {
     char status[32];
     const char *icon;
     int capacity, charging = 0;
 
     buf[0] = '\0';
+    *color = COL_FG;
     if (base == NULL || base[0] == '\0')
         return;
 
@@ -317,8 +372,142 @@ get_battery(const char *base, char *buf, size_t size)
         icon = ICON_BAT_EMPTY;
 
     /* Icon only; the percentage is shown in dwmstatus-popup. */
-    snprintf(buf, size, "%s%s", charging ? ICON_BOLT "  " : "", icon);
+    snprintf(buf, size, "%s%s", charging ? ICON_BOLT " " : "", icon);
+    if (charging)
+        *color = COL_OK;
+    else if (capacity <= 15)
+        *color = COL_WARN;
 }
+
+/* ---------------------------------------------------------------- network */
+
+/*
+ * Cheap, NetworkManager-independent link state from sysfs: wired wins over
+ * Wi-Fi, a present but disconnected interface is shown dimmed, and a machine
+ * without a physical interface hides the segment. Details (SSID, IP, scan,
+ * connect) are in the popup, which talks to NetworkManager.
+ */
+static void
+get_network(char *buf, size_t size, int *color)
+{
+    DIR *d;
+    struct dirent *e;
+    char dir[PATH_MAX], val[32];
+    int have_wired = 0, have_wifi = 0, wired_up = 0, wifi_up = 0;
+
+    buf[0] = '\0';
+    *color = COL_FG;
+
+    if (!(d = opendir(NETDIR)))
+        return;
+
+    while ((e = readdir(d))) {
+        int wifi, up;
+
+        if (e->d_name[0] == '.' || strcmp(e->d_name, "lo") == 0)
+            continue;
+        if (join_path(dir, sizeof(dir), NETDIR, e->d_name) < 0)
+            continue;
+        /* virtual devices (docker, veth, bridges, tunnels) have no device */
+        if (!path_exists(dir, "device"))
+            continue;
+
+        wifi = path_exists(dir, "wireless") || path_exists(dir, "phy80211");
+        up = read_attr(dir, "operstate", val, sizeof(val)) == 0 &&
+             strcmp(val, "up") == 0;
+
+        if (wifi) {
+            have_wifi = 1;
+            wifi_up |= up;
+        } else {
+            have_wired = 1;
+            wired_up |= up;
+        }
+    }
+    closedir(d);
+
+    if (wired_up) {
+        snprintf(buf, size, "%s", ICON_WIRED);
+    } else if (wifi_up) {
+        snprintf(buf, size, "%s", ICON_WIFI);
+    } else if (have_wifi) {
+        snprintf(buf, size, "%s", ICON_WIFI);
+        *color = COL_DIM;
+    } else if (have_wired) {
+        snprintf(buf, size, "%s", ICON_WIRED);
+        *color = COL_DIM;
+    }
+}
+
+/* -------------------------------------------------------------- bluetooth */
+
+/*
+ * Adapter hci* present, rfkill state, and one hciN:HANDLE entry per active
+ * connection - all from sysfs. Whether BlueZ itself has the adapter powered
+ * is only known to the popup (bluetoothctl).
+ */
+static int
+bt_blocked(void)
+{
+    DIR *d;
+    struct dirent *e;
+    char dir[PATH_MAX], val[32];
+    int blocked = 0;
+
+    if (!(d = opendir(RFKDIR)))
+        return 0;
+
+    while ((e = readdir(d))) {
+        if (strncmp(e->d_name, "rfkill", 6) != 0)
+            continue;
+        if (join_path(dir, sizeof(dir), RFKDIR, e->d_name) < 0)
+            continue;
+        if (read_attr(dir, "type", val, sizeof(val)) < 0 ||
+            strcmp(val, "bluetooth") != 0)
+            continue;
+        if ((read_attr(dir, "soft", val, sizeof(val)) == 0 &&
+             strcmp(val, "1") == 0) ||
+            (read_attr(dir, "hard", val, sizeof(val)) == 0 &&
+             strcmp(val, "1") == 0))
+            blocked = 1;
+    }
+    closedir(d);
+    return blocked;
+}
+
+static void
+get_bluetooth(char *buf, size_t size, int *color)
+{
+    DIR *d;
+    struct dirent *e;
+    int adapters = 0, conns = 0;
+
+    buf[0] = '\0';
+    *color = COL_FG;
+
+    if (!(d = opendir(BTDIR)))
+        return;
+    while ((e = readdir(d))) {
+        if (strncmp(e->d_name, "hci", 3) != 0)
+            continue;
+        if (strchr(e->d_name, ':'))
+            conns++;
+        else
+            adapters++;
+    }
+    closedir(d);
+
+    if (adapters == 0)
+        return; /* no adapter: hide segment */
+
+    snprintf(buf, size, "%s", ICON_BLUETOOTH);
+    if (bt_blocked())
+        *color = COL_DIM;
+    else if (conns > 0)
+        *color = COL_ACCENT;
+}
+
+/* ----------------------------------------------------------------- volume */
 
 /* Looks up an executable in PATH. 0 on success. */
 static int
@@ -358,7 +547,7 @@ find_program(const char *name, char *out, size_t size)
 /*
  * Runs a program and captures a bounded amount of stdout. The child is
  * killed if it does not finish in time, so a stuck wpctl cannot hang the
- * status bar. 0 on success.
+ * panel. 0 on success.
  */
 static int
 run_capture(const char *prog, char *const argv[], char *buf, size_t size,
@@ -459,10 +648,11 @@ run_capture(const char *prog, char *const argv[], char *buf, size_t size,
 
     /*
      * A child can close stdout and keep running, which looks like EOF here.
-     * Reap it, but not past the deadline, so it cannot freeze the bar either.
+     * Reap it, but not past the deadline, so it cannot freeze the panel.
      */
     while (!reaped && !timed_out) {
         pid_t w;
+        int left;
 
         if (!running) {
             timed_out = 1;
@@ -482,15 +672,12 @@ run_capture(const char *prog, char *const argv[], char *buf, size_t size,
             break;
         }
 
-        {
-            int left = time_left_ms(deadline);
-
-            if (left == 0) {
-                timed_out = 1;
-                break;
-            }
-            poll(NULL, 0, left > 5 ? 5 : left);
+        left = time_left_ms(deadline);
+        if (left == 0) {
+            timed_out = 1;
+            break;
         }
+        poll(NULL, 0, left > 5 ? 5 : left);
     }
 
     if (!reaped) {
@@ -516,7 +703,7 @@ run_capture(const char *prog, char *const argv[], char *buf, size_t size,
 static char wpctl_path[PATH_MAX];
 
 static void
-get_volume(char *buf, size_t size)
+get_volume(char *buf, size_t size, int *color)
 {
     char line[128];
     char *argv[] = { "wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@", NULL };
@@ -525,6 +712,7 @@ get_volume(char *buf, size_t size)
     const char *icon;
 
     buf[0] = '\0';
+    *color = COL_FG;
     if (wpctl_path[0] == '\0')
         return;
 
@@ -537,6 +725,7 @@ get_volume(char *buf, size_t size)
 
     if (strstr(line, "MUTED")) {
         snprintf(buf, size, "%s", ICON_VOL_OFF);
+        *color = COL_DIM;
         return;
     }
 
@@ -546,85 +735,34 @@ get_volume(char *buf, size_t size)
         vol = 10.0;
     volume = (int)(vol * 100.0 + 0.5);
 
-    if (volume == 0)
+    if (volume == 0) {
         icon = ICON_VOL_OFF;
-    else if (volume < 50)
+        *color = COL_DIM;
+    } else if (volume < 50) {
         icon = ICON_VOL_LOW;
-    else
+    } else {
         icon = ICON_VOL_HIGH;
+    }
 
     /* Icon only; the percentage is shown in dwmstatus-popup. */
     snprintf(buf, size, "%s", icon);
 }
 
-/* Caps Lock: shows the caps lock icon ONLY while Caps Lock is active. */
+/* -------------------------------------------------------------- caps lock */
+
 static void
-get_capslock(char *buf, size_t size)
+get_capslock(char *buf, size_t size, int *color)
 {
     XkbStateRec state;
 
     buf[0] = '\0';
+    *color = COL_ACCENT;
     if (XkbGetState(dpy, XkbUseCoreKbd, &state) == Success &&
         (state.locked_mods & LockMask))
         snprintf(buf, size, "%s", ICON_CAPS_ON);
 }
 
-/* Invisible gap between bar icons (no pipe separator; keep in sync with
- * STATUSSEP in dwm.c). */
-#define SEGSEP "  "
-
-static size_t
-append(char *dst, size_t size, size_t len, const char *seg)
-{
-    size_t seg_len;
-
-    if (size == 0)
-        return 0;
-    if (len >= size)
-        len = size - 1;
-    if (!seg || seg[0] == '\0')
-        return len;
-
-    seg_len = strlen(seg);
-    if (len > 0 && size - len > sizeof(SEGSEP) - 1) {
-        memcpy(dst + len, SEGSEP, sizeof(SEGSEP) - 1);
-        len += sizeof(SEGSEP) - 1;
-    }
-    if (seg_len > size - len - 1)
-        seg_len = size - len - 1;
-
-    memcpy(dst + len, seg, seg_len);
-    len += seg_len;
-    dst[len] = '\0';
-    return len;
-}
-
-/*
- * Companion to append(): record the name of a segment that was actually
- * added to the status text. Names are comma separated and follow the visual
- * order of the segments ("caps,vol,bat").
- */
-static size_t
-appendseg(char *dst, size_t size, size_t len, const char *name,
-          const char *seg)
-{
-    size_t name_len;
-
-    if (size == 0 || !seg || seg[0] == '\0')
-        return len;
-    if (len >= size)
-        return size - 1;
-
-    name_len = strlen(name);
-    if (len + (len > 0 ? 1 : 0) + name_len + 1 > size)
-        return len;
-    if (len > 0)
-        dst[len++] = ',';
-    memcpy(dst + len, name, name_len);
-    len += name_len;
-    dst[len] = '\0';
-    return len;
-}
+/* ------------------------------------------------------------------ state */
 
 /* Paths are cached and re-discovered periodically to survive hotplug. */
 static char bat_path[PATH_MAX];
@@ -638,16 +776,552 @@ discover(void)
         wpctl_path[0] = '\0';
 }
 
+/* Stores a segment's new state. Returns 1 if it changed. */
+static int
+setseg(struct segment *s, const char *text, int color)
+{
+    if (strcmp(s->text, text) == 0 && (text[0] == '\0' || s->color == color))
+        return 0;
+    snprintf(s->text, sizeof(s->text), "%s", text);
+    s->color = color;
+    return 1;
+}
+
+static int
+refresh_caps(void)
+{
+    char buf[32];
+    int color;
+
+    get_capslock(buf, sizeof(buf), &color);
+    return setseg(&segs[0], buf, color);
+}
+
+/* net, bt, bat, pwr: cheap sysfs reads */
+static int
+refresh_sysfs(void)
+{
+    char buf[32];
+    int color, changed = 0;
+
+    get_network(buf, sizeof(buf), &color);
+    changed |= setseg(&segs[1], buf, color);
+    get_bluetooth(buf, sizeof(buf), &color);
+    changed |= setseg(&segs[2], buf, color);
+    get_battery(bat_path, buf, sizeof(buf), &color);
+    changed |= setseg(&segs[4], buf, color);
+    changed |= setseg(&segs[5], ICON_POWER, COL_FG);
+    return changed;
+}
+
+static int
+refresh_volume(void)
+{
+    char buf[32];
+    int color;
+
+    get_volume(buf, sizeof(buf), &color);
+    return setseg(&segs[3], buf, color);
+}
+
+/* ------------------------------------------------------------------ fonts */
+
+#define NFACES 5
+static const char *families[NFACES] = {
+    NULL, /* DWMSTATUS_FONT or the default, set in main() */
+    "Symbols Nerd Font",
+    "Symbols Nerd Font Mono",
+    "DejaVu Sans",
+    "sans-serif",
+};
+static cairo_scaled_font_t *faces[NFACES];
+static double font_ascent, font_descent;
+
+static void
+free_fonts(void)
+{
+    int i;
+
+    for (i = 0; i < NFACES; i++) {
+        if (faces[i]) {
+            cairo_scaled_font_destroy(faces[i]);
+            faces[i] = NULL;
+        }
+    }
+}
+
+static void
+build_fonts(int height)
+{
+    cairo_font_options_t *opts;
+    cairo_font_extents_t fe;
+    cairo_matrix_t fm, ctm;
+    cairo_font_face_t *ff;
+    double px_size = height * 0.6;
+    int i;
+
+    if (px_size < 8)
+        px_size = 8;
+
+    free_fonts();
+
+    cairo_matrix_init_scale(&fm, px_size, px_size);
+    cairo_matrix_init_identity(&ctm);
+    opts = cairo_font_options_create();
+
+    for (i = 0; i < NFACES; i++) {
+        ff = cairo_toy_font_face_create(families[i], CAIRO_FONT_SLANT_NORMAL,
+                                        CAIRO_FONT_WEIGHT_NORMAL);
+        faces[i] = cairo_scaled_font_create(ff, &fm, &ctm, opts);
+        cairo_font_face_destroy(ff);
+        if (cairo_scaled_font_status(faces[i]) != CAIRO_STATUS_SUCCESS) {
+            cairo_scaled_font_destroy(faces[i]);
+            faces[i] = NULL;
+        }
+    }
+    cairo_font_options_destroy(opts);
+
+    font_ascent = font_descent = 0;
+    for (i = 0; i < NFACES; i++) {
+        if (faces[i]) {
+            cairo_scaled_font_extents(faces[i], &fe);
+            font_ascent = fe.ascent;
+            font_descent = fe.descent;
+            break;
+        }
+    }
+    font_h = height;
+}
+
+static int
+utf8_len(unsigned char c)
+{
+    if (c < 0x80)
+        return 1;
+    if ((c >> 5) == 0x6)
+        return 2;
+    if ((c >> 4) == 0xe)
+        return 3;
+    if ((c >> 3) == 0x1e)
+        return 4;
+    return 1;
+}
+
+/*
+ * Picks the first font that has a glyph for the UTF-8 character at u. Cairo
+ * does no per-glyph fallback, and the Nerd Font may lack e.g. U+21EA.
+ * Returns the face and its glyphs (caller frees); NULL if there is no face.
+ */
+static cairo_scaled_font_t *
+pick_face(const char *u, int len, cairo_glyph_t **glyphs, int *n)
+{
+    cairo_scaled_font_t *first = NULL;
+    cairo_glyph_t *g, *first_g = NULL;
+    int ng, first_n = 0, i;
+
+    for (i = 0; i < NFACES; i++) {
+        if (!faces[i])
+            continue;
+        g = NULL;
+        ng = 0;
+        if (cairo_scaled_font_text_to_glyphs(faces[i], 0, 0, u, len, &g,
+                                             &ng, NULL, NULL, NULL) !=
+            CAIRO_STATUS_SUCCESS || ng <= 0) {
+            cairo_glyph_free(g);
+            continue;
+        }
+        if (g[0].index != 0) { /* index 0 is .notdef: glyph missing */
+            cairo_glyph_free(first_g);
+            *glyphs = g;
+            *n = ng;
+            return faces[i];
+        }
+        if (!first) {
+            first = faces[i];
+            first_g = g;
+            first_n = ng;
+        } else {
+            cairo_glyph_free(g);
+        }
+    }
+    *glyphs = first_g;
+    *n = first_n;
+    return first;
+}
+
+/*
+ * Draws text with baseline y starting at x (cr may be NULL to only measure)
+ * and returns its advance width.
+ */
+static double
+draw_text(cairo_t *cr, double x, double y, const char *text)
+{
+    const char *p;
+    double start = x;
+    int len, n, k;
+    cairo_glyph_t *g;
+    cairo_scaled_font_t *face;
+    cairo_text_extents_t ext;
+
+    for (p = text; *p; p += len) {
+        len = utf8_len((unsigned char)*p);
+        face = pick_face(p, len, &g, &n);
+        if (!face)
+            continue;
+        cairo_scaled_font_glyph_extents(face, g, n, &ext);
+        if (cr) {
+            cairo_set_scaled_font(cr, face);
+            for (k = 0; k < n; k++) {
+                g[k].x += x;
+                g[k].y += y;
+            }
+            cairo_show_glyphs(cr, g, n);
+        }
+        x += ext.x_advance;
+        cairo_glyph_free(g);
+    }
+    return x - start;
+}
+
+/* ----------------------------------------------------------------- layout */
+
+/* Computes each visible segment's x/w; returns the total panel width. */
+static int
+layout(int height)
+{
+    int pad = height * 2 / 5, x = 0;
+    size_t i;
+
+    if (pad < 5)
+        pad = 5;
+    for (i = 0; i < NSEG; i++) {
+        struct segment *s = &segs[i];
+
+        s->x = s->w = 0;
+        if (s->text[0] == '\0')
+            continue;
+        s->w = (int)(draw_text(NULL, 0, 0, s->text) + 0.5) + 2 * pad;
+        s->x = x;
+        x += s->w;
+    }
+    return x;
+}
+
+static void
+set_source(cairo_t *cr, int col)
+{
+    cairo_set_source_rgb(cr, palette[col][0], palette[col][1],
+                         palette[col][2]);
+}
+
+static void
+draw(void)
+{
+    cairo_t *cr;
+    double baseline;
+    int pad;
+    size_t i;
+
+    if (!surf || !panel_mapped)
+        return;
+
+    cr = cairo_create(surf);
+    set_source(cr, COL_BG);
+    cairo_paint(cr);
+
+    pad = ph * 2 / 5;
+    if (pad < 5)
+        pad = 5;
+    baseline = (ph - (font_ascent + font_descent)) / 2.0 + font_ascent;
+
+    for (i = 0; i < NSEG; i++) {
+        struct segment *s = &segs[i];
+
+        if (s->text[0] == '\0')
+            continue;
+        set_source(cr, s->color);
+        draw_text(cr, s->x + pad, baseline, s->text);
+    }
+    cairo_destroy(cr);
+    cairo_surface_flush(surf);
+    XFlush(dpy);
+}
+
+/* ------------------------------------------------------------ dwm bar/win */
+
+/* Finds dwm's bar window (WM_CLASS dwm/dwm), the leftmost one. 0 if none. */
+static Window
+find_bar(void)
+{
+    Window r, p, *kids = NULL, best = 0;
+    unsigned int n, i;
+    int best_x = 0;
+
+    if (!XQueryTree(dpy, root, &r, &p, &kids, &n))
+        return 0;
+
+    for (i = 0; i < n; i++) {
+        XClassHint ch;
+        XWindowAttributes wa;
+        int isbar;
+
+        if (kids[i] == win)
+            continue;
+        ch.res_name = ch.res_class = NULL;
+        if (!XGetClassHint(dpy, kids[i], &ch))
+            continue;
+        isbar = ch.res_name && ch.res_class &&
+                strcmp(ch.res_name, "dwm") == 0 &&
+                strcmp(ch.res_class, "dwm") == 0;
+        if (ch.res_name)
+            XFree(ch.res_name);
+        if (ch.res_class)
+            XFree(ch.res_class);
+        if (!isbar || !XGetWindowAttributes(dpy, kids[i], &wa) ||
+            wa.map_state != IsViewable)
+            continue;
+        if (!best || wa.x < best_x) {
+            best = kids[i];
+            best_x = wa.x;
+        }
+    }
+    if (kids)
+        XFree(kids);
+    return best;
+}
+
+/*
+ * Geometry of dwm's bar. Returns 0 when there is none. rescan forces a new
+ * search; otherwise the cached window is only re-read.
+ */
+static int
+bar_geometry(int rescan, int *x, int *y, int *w, int *h)
+{
+    XWindowAttributes wa;
+
+    if (rescan || !barwin || !XGetWindowAttributes(dpy, barwin, &wa)) {
+        barwin = find_bar();
+        if (!barwin || !XGetWindowAttributes(dpy, barwin, &wa)) {
+            barwin = 0;
+            return 0;
+        }
+    }
+    *x = wa.x;
+    *y = wa.y;
+    *w = wa.width;
+    *h = wa.height;
+    return 1;
+}
+
+static void
+create_panel(int x, int y, int w, int h)
+{
+    XSetWindowAttributes wa;
+    XClassHint ch = { "dwmstatus", "dwmstatus" };
+    XColor c;
+    Atom type, dock;
+
+    c.red = (unsigned short)(palette[COL_BG][0] * 65535);
+    c.green = (unsigned short)(palette[COL_BG][1] * 65535);
+    c.blue = (unsigned short)(palette[COL_BG][2] * 65535);
+    c.flags = DoRed | DoGreen | DoBlue;
+    XAllocColor(dpy, DefaultColormap(dpy, screen), &c);
+
+    wa.override_redirect = True; /* dwm must not manage or tile the panel */
+    wa.background_pixel = c.pixel;
+    wa.event_mask = ExposureMask | ButtonPressMask;
+    win = XCreateWindow(dpy, root, x, y, (unsigned)w, (unsigned)h, 0,
+                        DefaultDepth(dpy, screen), CopyFromParent,
+                        DefaultVisual(dpy, screen),
+                        CWOverrideRedirect | CWBackPixel | CWEventMask, &wa);
+    XSetClassHint(dpy, win, &ch);
+    XStoreName(dpy, win, "dwmstatus");
+
+    type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+    dock = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
+    XChangeProperty(dpy, win, type, XA_ATOM, 32, PropModeReplace,
+                    (unsigned char *)&dock, 1);
+
+    surf = cairo_xlib_surface_create(dpy, win, DefaultVisual(dpy, screen),
+                                     w, h);
+    px = x;
+    py = y;
+    pw = w;
+    ph = h;
+}
+
+/*
+ * Brings the panel in line with dwm's bar and the current segments: height,
+ * position (right end of the bar), visibility. Redraws when anything changed
+ * or when force is set.
+ */
+static void
+update_panel(int rescan, int force)
+{
+    int bx = 0, by = 0, bw = 0, bh = 0, have_bar;
+    int nx, ny, nw, nh, hidden = 0;
+
+    have_bar = bar_geometry(rescan, &bx, &by, &bw, &bh);
+    if (have_bar) {
+        nh = bh;
+        /* dwm hides its bar by moving it just off the screen */
+        if (by + bh <= 0 || by >= DisplayHeight(dpy, screen))
+            hidden = 1;
+    } else {
+        const char *h = getenv("DWMSTATUS_HEIGHT");
+
+        nh = (h && atoi(h) > 0) ? atoi(h) : FALLBACK_HEIGHT;
+    }
+    if (nh < 8)
+        nh = 8;
+
+    if (nh != font_h) {
+        build_fonts(nh);
+        force = 1;
+    }
+    nw = layout(nh);
+    if (nw <= 0)
+        hidden = 1;
+
+    if (hidden) {
+        if (panel_mapped) {
+            XUnmapWindow(dpy, win);
+            panel_mapped = 0;
+            XFlush(dpy);
+        }
+        return;
+    }
+
+    nx = have_bar ? bx + bw - nw : DisplayWidth(dpy, screen) - nw;
+    ny = have_bar ? by : 0;
+    if (nx < 0)
+        nx = 0;
+
+    if (!win) {
+        create_panel(nx, ny, nw, nh);
+        force = 1;
+    } else if (nx != px || ny != py || nw != pw || nh != ph) {
+        cairo_xlib_surface_set_size(surf, nw, nh);
+        XMoveResizeWindow(dpy, win, nx, ny, (unsigned)nw, (unsigned)nh);
+        px = nx;
+        py = ny;
+        pw = nw;
+        ph = nh;
+        force = 1;
+    }
+
+    if (!panel_mapped) {
+        XMapRaised(dpy, win);
+        panel_mapped = 1;
+        force = 1;
+    }
+    if (force)
+        draw();
+}
+
+/* ----------------------------------------------------------------- clicks */
+
+/*
+ * Runs the popup detached (double fork, so there is never a zombie and no
+ * waitpid() race with run_capture). The panel geometry is passed along so
+ * the popup can open right below (or above) the panel.
+ */
+static void
+spawn_popup(const char *arg)
+{
+    const char *cmd = getenv("DWMSTATUS_POPUP");
+    pid_t pid;
+
+    if (cmd == NULL || cmd[0] == '\0')
+        cmd = "dwmstatus-popup";
+
+    if ((pid = fork()) < 0)
+        return;
+    if (pid == 0) {
+        char anchor[96];
+        int devnull;
+        pid_t g;
+
+        if ((g = fork()) != 0)
+            _exit(g < 0 ? 1 : 0);
+
+        setsid();
+        snprintf(anchor, sizeof(anchor), "%d,%d,%d,%d", px, py, pw, ph);
+        setenv("DWMSTATUS_PANEL", anchor, 1);
+        if ((devnull = open("/dev/null", O_RDWR)) >= 0) {
+            dup2(devnull, STDIN_FILENO);
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            if (devnull > STDERR_FILENO)
+                close(devnull);
+        }
+        execlp(cmd, cmd, arg, (char *)NULL);
+        _exit(127);
+    }
+    while (waitpid(pid, NULL, 0) < 0 && errno == EINTR)
+        ;
+}
+
+static void
+buttonpress(XButtonEvent *ev)
+{
+    size_t i;
+
+    if (ev->button != Button1)
+        return;
+    for (i = 0; i < NSEG; i++) {
+        if (segs[i].w > 0 && ev->x >= segs[i].x &&
+            ev->x < segs[i].x + segs[i].w) {
+            spawn_popup(segs[i].arg);
+            return;
+        }
+    }
+}
+
+/* ------------------------------------------------------------------- main */
+
+static void
+parse_color(const char *envname, int col)
+{
+    const char *s = getenv(envname);
+    unsigned int r, g, b;
+    char tail;
+
+    if (s && sscanf(s, "#%2x%2x%2x%c", &r, &g, &b, &tail) == 3) {
+        palette[col][0] = r / 255.0;
+        palette[col][1] = g / 255.0;
+        palette[col][2] = b / 255.0;
+    }
+}
+
+/* One panel per user and display; a second one would only fight the first. */
+static int
+single_instance(void)
+{
+    const char *dir = getenv("XDG_RUNTIME_DIR");
+    const char *disp = getenv("DISPLAY");
+    char path[PATH_MAX];
+    int fd;
+
+    if (!dir || !dir[0])
+        dir = "/tmp";
+    snprintf(path, sizeof(path), "%s/dwmstatus-%u-%s.lock", dir,
+             (unsigned)getuid(), disp ? disp : "");
+    if ((fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0600)) < 0)
+        return 1; /* cannot lock: carry on rather than refuse to start */
+    if (flock(fd, LOCK_EX | LOCK_NB) < 0)
+        return 0;
+    return 1; /* fd stays open (and locked) for the life of the process */
+}
+
 int
 main(int argc, char *argv[])
 {
     struct sigaction sa;
-    char status[512], last_status[512];
-    char caps[32], vol[64], bat[64];
-    char segs[64];
-    long long now, last_sysfs, last_volume, last_discovery;
-    int have_last = 0;
-    size_t len;
+    long long now, next_tick, next_volume, next_discovery;
+    struct pollfd pfd;
+    int tick = 0, changed, redraw, timeout;
+    const char *font;
 
     if (argc == 2 && strcmp(argv[1], "-v") == 0) {
         puts("dwmstatus-" VERSION);
@@ -661,10 +1335,15 @@ main(int argc, char *argv[])
         fprintf(stderr, "dwmstatus: cannot open display.\n");
         return 1;
     }
+    if (!single_instance()) {
+        fprintf(stderr, "dwmstatus: already running.\n");
+        return 1;
+    }
+    XSetErrorHandler(xerror);
+    screen = DefaultScreen(dpy);
     root = DefaultRootWindow(dpy);
-    segatom = XInternAtom(dpy, "_DWMSTATUS_SEGMENTS", False);
 
-    /* Do not leak the X connection into short-lived children (wpctl). */
+    /* Do not leak the X connection into short-lived children. */
     {
         int flags = fcntl(ConnectionNumber(dpy), F_GETFD);
         if (flags >= 0)
@@ -674,73 +1353,114 @@ main(int argc, char *argv[])
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = onsignal;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0; /* no SA_RESTART: we want nanosleep/poll interrupted */
+    sa.sa_flags = 0; /* no SA_RESTART: we want poll interrupted */
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
 
-    discover();
+    font = getenv("DWMSTATUS_FONT");
+    families[0] = (font && font[0]) ? font : "JetBrainsMono Nerd Font";
+    parse_color("DWMSTATUS_BG", COL_BG);
+    parse_color("DWMSTATUS_FG", COL_FG);
+    parse_color("DWMSTATUS_DIM", COL_DIM);
+    parse_color("DWMSTATUS_ACCENT", COL_ACCENT);
+    parse_color("DWMSTATUS_WARN", COL_WARN);
+    parse_color("DWMSTATUS_OK", COL_OK);
 
-    caps[0] = vol[0] = bat[0] = '\0';
-    last_status[0] = '\0';
-    last_discovery = now_ms();
-    last_sysfs = last_discovery - SYSFS_INTERVAL_MS;
-    last_volume = last_discovery - VOLUME_INTERVAL_MS;
+    /*
+     * Older versions put the status in dwm's bar through the root window
+     * name and _DWMSTATUS_SEGMENTS. Remove those; a single space also stops
+     * dwm from showing its own "dwm-x.y" banner next to the panel.
+     */
+    XDeleteProperty(dpy, root, XInternAtom(dpy, "_DWMSTATUS_SEGMENTS", False));
+    XStoreName(dpy, root, " ");
 
-    while (running) {
-        now = now_ms();
+    /* Caps Lock is delivered as an event instead of being polled. */
+    {
+        int opcode, error, major = XkbMajorVersion, minor = XkbMinorVersion;
 
-        /* Refresh cached sysfs/program paths occasionally (hotplug). */
-        if (now - last_discovery >= DISCOVERY_INTERVAL_MS ||
-            now < last_discovery) {
-            discover();
-            last_discovery = now;
-            /* Reflect any newly found/removed device immediately. */
-            last_sysfs = now - SYSFS_INTERVAL_MS;
-            last_volume = now - VOLUME_INTERVAL_MS;
+        if (XkbQueryExtension(dpy, &opcode, &xkb_event_base, &error, &major,
+                              &minor)) {
+            XkbSelectEventDetails(dpy, XkbUseCoreKbd, XkbStateNotify,
+                                  XkbModifierLockMask, XkbModifierLockMask);
+            xkb_ok = 1;
         }
-
-        get_capslock(caps, sizeof(caps));
-
-        if (now - last_sysfs >= SYSFS_INTERVAL_MS || now < last_sysfs) {
-            get_battery(bat_path, bat, sizeof(bat));
-            last_sysfs = now;
-        }
-
-        if (now - last_volume >= VOLUME_INTERVAL_MS ||
-            now < last_volume) {
-            get_volume(vol, sizeof(vol));
-            last_volume = now;
-        }
-
-        len = 0;
-        status[0] = '\0';
-        segs[0] = '\0';
-
-        len = append(status, sizeof(status), len, caps);
-        len = append(status, sizeof(status), len, vol);
-        len = append(status, sizeof(status), len, bat);
-
-        len = 0;
-        len = appendseg(segs, sizeof(segs), len, "caps", caps);
-        len = appendseg(segs, sizeof(segs), len, "vol", vol);
-        len = appendseg(segs, sizeof(segs), len, "bat", bat);
-
-        /*
-         * Only touch the root window name when something changed. Setting
-         * an identical name still makes dwm receive PropertyNotify and
-         * redraw its entire bar, which is wasted CPU every poll.
-         */
-        if (!have_last || strcmp(status, last_status) != 0) {
-            setstatus(status, segs);
-            snprintf(last_status, sizeof(last_status), "%s", status);
-            have_last = 1;
-        }
-
-        if (running)
-            sleep_ms(UPDATE_INTERVAL_MS);
     }
 
-    setstatus("", "");
+    discover();
+    refresh_caps();
+    refresh_sysfs();
+    refresh_volume();
+    update_panel(1, 1);
+
+    now = now_ms();
+    next_tick = now + TICK_INTERVAL_MS;
+    next_volume = now + VOLUME_INTERVAL_MS;
+    next_discovery = now + DISCOVERY_INTERVAL_MS;
+    pfd.fd = ConnectionNumber(dpy);
+    pfd.events = POLLIN;
+
+    while (running) {
+        changed = 0;
+        redraw = 0;
+
+        XFlush(dpy);
+        while (XPending(dpy)) {
+            XEvent ev;
+
+            XNextEvent(dpy, &ev);
+            if (ev.type == Expose && ev.xexpose.window == win &&
+                ev.xexpose.count == 0)
+                redraw = 1;
+            else if (ev.type == ButtonPress && ev.xbutton.window == win)
+                buttonpress(&ev.xbutton);
+            else if (xkb_ok && ev.type == xkb_event_base &&
+                     ((XkbEvent *)&ev)->any.xkb_type == XkbStateNotify)
+                changed |= refresh_caps();
+        }
+
+        now = now_ms();
+        if (now >= next_discovery) {
+            discover();
+            next_discovery = now + DISCOVERY_INTERVAL_MS;
+            next_tick = now;
+            next_volume = now;
+        }
+        if (now >= next_volume) {
+            changed |= refresh_volume();
+            next_volume = now + VOLUME_INTERVAL_MS;
+        }
+        if (now >= next_tick) {
+            if (!xkb_ok)
+                changed |= refresh_caps();
+            changed |= refresh_sysfs();
+            tick++;
+            /* geometry of dwm's bar, with an occasional full search */
+            update_panel(tick % BAR_RESCAN_TICKS == 0, changed || redraw);
+            changed = redraw = 0;
+            next_tick = now + TICK_INTERVAL_MS;
+        }
+        if (changed || redraw)
+            update_panel(0, 1);
+
+        if (!running)
+            break;
+
+        timeout = time_left_ms(next_tick);
+        if (time_left_ms(next_volume) < timeout)
+            timeout = time_left_ms(next_volume);
+        if (XPending(dpy))
+            continue;
+        if (poll(&pfd, 1, timeout) < 0 && errno != EINTR)
+            break;
+    }
+
+    XStoreName(dpy, root, "");
+    free_fonts();
+    if (surf)
+        cairo_surface_destroy(surf);
+    if (win)
+        XDestroyWindow(dpy, win);
     XCloseDisplay(dpy);
+    cairo_debug_reset_static_data(); /* release Cairo's global caches */
     return 0;
 }

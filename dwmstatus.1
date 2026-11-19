@@ -1,66 +1,110 @@
 .TH DWMSTATUS 1 dwmstatus\-VERSION
 .SH NAME
-dwmstatus \- status bar untuk dynamic window manager (dwm)
+dwmstatus \- panel status mandiri untuk dynamic window manager (dwm)
 .SH SYNOPSIS
 .B dwmstatus
 .RB [ \-v ]
 .SH DESCRIPTION
 .B dwmstatus
-adalah aplikasi status bar ringan yang berjalan di latar belakang untuk memperbarui nama jendela utama (root window name) pada sistem X11, yang digunakan oleh dwm untuk menampilkan status sistem.
+adalah panel status ringan bergaya polybar: jendela X sendiri, digambar dengan
+Cairo, yang berada di ujung kanan bar dwm. Panel ini
+.B tidak
+menulis teks status dwm (nama root window) dan tidak memerlukan patch dwm;
+klik ditangani oleh panel itu sendiri.
 .P
 Bar menampilkan ikon Nerd Font saja, dari kiri ke kanan: Caps Lock (hanya saat
-aktif), volume, dan baterai. Ikon dipisahkan oleh spasi tak terlihat (tanpa
-pipa `|`). Persentase, slider kecerahan, dan digit jam ditampilkan di popup
-gabungan
+aktif), jaringan, Bluetooth, volume, baterai, dan tombol daya. Bagian yang tidak
+tersedia (misalnya baterai pada desktop atau Bluetooth tanpa adaptor)
+disembunyikan. Persentase, jam, dan semua kontrol ditampilkan di popup gabungan
 .BR dwmstatus-popup .
 .P
-Nama jendela utama hanya diperbarui saat status berubah, sehingga dwm tidak
-menggambar ulang bar setiap kali polling. Caps Lock diperiksa setiap 0,5 detik,
-baterai setiap 1 detik, volume setiap 2 detik, dan perangkat sysfs dipindai
-ulang setiap 30 detik agar hotplug tetap terdeteksi.
+Caps Lock diterima sebagai event keyboard X sehingga tidak perlu polling.
+Jaringan, Bluetooth, dan baterai dibaca dari
+.I /sys/class
+setiap 1 detik, volume (melalui
+.BR wpctl (1))
+setiap 2 detik, dan perangkat sysfs dipindai ulang setiap 30 detik agar hotplug
+tetap terdeteksi. Panel hanya digambar ulang saat tampilannya berubah.
 .P
-.B dwmstatus
-juga menulis nama bagian yang sedang tampil, yaitu
-.IR caps ,
-.IR vol ,
-dan
-.IR bat ,
-ke properti
-.I _DWMSTATUS_SEGMENTS
-pada root window, sehingga dwm dapat membuka popup gabungan saat ikon status
-diklik.
+Panel mencari jendela bar dwm (kelas jendela
+.IR dwm ),
+memakai tingginya, menempel di ujung kanannya, mengikutinya ke bawah bila
+.I topbar
+dimatikan, dan bersembunyi saat bar dwm disembunyikan. Tanpa dwm, panel muncul
+di kanan atas layar. Hanya satu panel yang berjalan per pengguna dan display.
 .P
-Diperlukan Nerd Font pada dwm agar ikon tampil.
+Diperlukan Nerd Font. Dwmstatus juga menulis satu spasi ke nama root window agar
+dwm tidak menampilkan teks
+.I dwm-x.y
+di samping panel.
 .SH OPTIONS
 .TP
 .B \-v
 Cetak versi lalu keluar.
 .SH ENVIRONMENT
 .TP
+.B DWMSTATUS_FONT
+Keluarga font Nerd Font (default: JetBrainsMono Nerd Font).
+.TP
+.BR DWMSTATUS_BG ", " DWMSTATUS_FG ", " DWMSTATUS_DIM ", " DWMSTATUS_ACCENT ", " DWMSTATUS_WARN ", " DWMSTATUS_OK
+Warna dalam format #rrggbb. Samakan DWMSTATUS_BG dengan bar dwm.
+.TP
+.B DWMSTATUS_HEIGHT
+Tinggi panel bila bar dwm tidak ditemukan (default: 24).
+.TP
+.B DWMSTATUS_POPUP
+Perintah yang dijalankan saat diklik (default: dwmstatus-popup).
+.TP
 .B DWMSTATUS_TZ
-Zona waktu yang dipakai untuk digit jam di popup (default: Asia/Jakarta).
+Zona waktu jam di popup (default: Asia/Jakarta).
+.TP
+.BR DWMSTATUS_LOCK ", " DWMSTATUS_LOGOUT ", " DWMSTATUS_SUSPEND ", " DWMSTATUS_REBOOT ", " DWMSTATUS_POWEROFF
+Perintah menu daya. Nilainya dipecah seperti shell tetapi tidak dijalankan
+melalui shell.
 .SH POPUP
-Skrip
-.B dwmstatus-popup
-menampilkan satu popup GTK 3 gabungan: jam besar yang diperbarui setiap detik,
-slider kecerahan, slider volume dengan tombol mute, indikator level baterai
-beserta status pengisiannya, dan kalender yang judulnya menampilkan tanggal
-terpilih.
-Popup selalu muncul di posisi tetap, yaitu 40 piksel dari atas dan 15 piksel
-dari tepi kanan monitor. Judul jendelanya `status`, sehingga dwm tidak
-menandainya sebagai `broken` saat popup terbuka.
-Argumen opsional
-.BR vol ", " bat " atau " tim
-memfokuskan bagian yang sesuai dengan ikon yang diklik.
-Setiap bagian diberi ikon Nerd Font: ikon jam untuk waktu, matahari untuk
-kecerahan, ikon volume yang mengikuti level, ikon baterai yang mengikuti sisa
-daya (dengan ikon petir saat mengisi), dan kalender.
-Bagian yang tidak memiliki backend yang berfungsi akan disembunyikan.
-Klik lagi pada bagian yang sama, tombol
+Klik kiri pada sebuah bagian panel menjalankan
+.BR dwmstatus-popup ,
+satu popup GTK 3 gabungan yang difokuskan pada bagian yang diklik. Popup muncul
+tepat di bawah panel (di atasnya untuk bar bawah), rata dengan tepi kanan panel.
+Judul jendelanya `status`. Klik lagi pada bagian yang sama, tombol
 .BR Esc ,
 .BR Return ,
 atau klik di luar popup akan menutupnya.
-Popup memerlukan Python 3, PyGObject, dan GTK 3.
+.P
+Isi popup dari atas ke bawah; bagian tanpa backend yang berfungsi disembunyikan:
+.TP
+.B Jam
+Jam besar yang diperbarui setiap detik.
+.TP
+.B Daya
+Tombol Kunci, Keluar, Suspend, Reboot, dan Matikan, ditambah uptime. Keluar,
+Reboot, dan Matikan meminta konfirmasi; fokus awal ada pada Batal.
+.TP
+.B Jaringan
+Memakai
+.BR nmcli (1)
+(NetworkManager harus berjalan): koneksi aktif dan alamat IP, saklar Wi-Fi, dan
+daftar jaringan sekitar. Klik jaringan untuk terhubung, klik jaringan aktif untuk
+memutus. Jaringan aman yang baru meminta kata sandi. Kata sandi diberikan ke
+.B nmcli
+sebagai argumen baris perintah sehingga terlihat di
+.BR ps (1)
+selama beberapa detik.
+.TP
+.B Bluetooth
+Memakai
+.BR bluetoothctl (1):
+saklar daya dan perangkat yang sudah dipasangkan; klik untuk menghubungkan atau
+memutus. Ikon di panel hanya berdasarkan sysfs dan rfkill; status daya BlueZ
+yang tepat hanya ada di popup.
+.TP
+.B Kecerahan, Volume, Baterai, Kalender
+Slider kecerahan, slider volume dengan tombol mute, indikator baterai beserta
+status pengisiannya, dan kalender.
+.P
+Argumen opsional
+.BR pwr ", " net ", " bt ", " bri ", " vol ", " bat " atau " tim
+memfokuskan bagian yang sesuai. Popup memerlukan Python 3, PyGObject, dan GTK 3.
 .SH KALENDER
 Skrip
 .B dwmstatus-calendar
@@ -75,9 +119,6 @@ atau
 .BR dmenu (1).
 Ini adalah alternatif notifikasi dari kalender di
 .BR dwmstatus-popup .
-Skrip ini dapat dipanggil oleh
-.BR dwm (1)
-melalui pengikatan tombol pada teks status; lihat README untuk contoh.
 .SH SLIDER
 Skrip
 .B dwmstatus-volume
@@ -106,18 +147,17 @@ dan
 .B \-\-toggle-mute
 hanya untuk volume.
 Semua mode baris perintah bekerja tanpa GTK.
-Skrip ini dipanggil oleh
-.BR dwm (1)
-melalui pengikatan tombol pada bagian teks status.
 .SH SIGNALS
 .B SIGINT
 dan
 .B SIGTERM
 menghentikan dwmstatus dengan bersih.
 .SH SEE ALSO
+.BR bluetoothctl (1),
 .BR brightnessctl (1),
 .BR cal (1),
 .BR dwm (1),
+.BR nmcli (1),
 .BR pactl (1),
 .BR wpctl (1)
 .SH AUTHORS
