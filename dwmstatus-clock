@@ -9,9 +9,13 @@ anchors it, otherwise in the middle of the monitor, 40 px from the top.
 """
 
 import datetime
+import json
 import os
 import sys
+import threading
 import time
+import urllib.parse
+import urllib.request
 
 sys.dont_write_bytecode = True  # keep __pycache__ out of the repo
 
@@ -41,6 +45,131 @@ ICON_CALENDAR = "\uf073"  # nf-fa-calendar
 # Visible gaps between an icon and its label, in pixels.
 CLOCK_ICON_GAP = 28       # clock icon -> live time and date
 ICON_TEXT_GAP = 12        # calendar icon -> "Calendar" heading
+
+# Weather comes from Open-Meteo (no API key).  It is fetched in a background
+# thread and cached, so an offline machine never blocks or breaks the popup.
+WEATHER_API = "https://api.open-meteo.com/v1/forecast"
+WEATHER_TTL = 600         # seconds between refreshes
+WEATHER_TIMEOUT = 5       # seconds before giving up on a request
+WEATHER_CACHE = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR") or "/tmp",
+    f"dwmstatus-weather-{os.getuid()}.json")
+
+# WMO weather code -> Nerd Font glyph and a short description.
+WEATHER_CODES = {
+    0: ("\uf185", "Clear"),
+    1: ("\uf6c4", "Mostly clear"),
+    2: ("\uf6c4", "Partly cloudy"),
+    3: ("\uf0c2", "Cloudy"),
+    45: ("\uf0c2", "Fog"),
+    48: ("\uf0c2", "Rime fog"),
+    51: ("\uf043", "Light drizzle"),
+    53: ("\uf043", "Drizzle"),
+    55: ("\uf043", "Heavy drizzle"),
+    56: ("\uf043", "Freezing drizzle"),
+    57: ("\uf043", "Freezing drizzle"),
+    61: ("\uf043", "Light rain"),
+    63: ("\uf043", "Rain"),
+    65: ("\uf043", "Heavy rain"),
+    66: ("\uf043", "Freezing rain"),
+    67: ("\uf043", "Freezing rain"),
+    71: ("\uf2dc", "Light snow"),
+    73: ("\uf2dc", "Snow"),
+    75: ("\uf2dc", "Heavy snow"),
+    77: ("\uf2dc", "Snow grains"),
+    80: ("\uf043", "Rain showers"),
+    81: ("\uf043", "Rain showers"),
+    82: ("\uf043", "Violent showers"),
+    85: ("\uf2dc", "Snow showers"),
+    86: ("\uf2dc", "Snow showers"),
+    95: ("\uf0e7", "Thunderstorm"),
+    96: ("\uf0e7", "Thunderstorm"),
+    99: ("\uf0e7", "Thunderstorm"),
+}
+
+
+def weather_settings():
+    """Location, time zone and temperature unit for the weather request."""
+    try:
+        lat = float(os.environ.get("DWMSTATUS_LAT", "-6.2088"))
+        lon = float(os.environ.get("DWMSTATUS_LON", "106.8456"))
+    except ValueError:
+        lat, lon = -6.2088, 106.8456
+    unit = os.environ.get("DWMSTATUS_WEATHER_UNIT", "C").upper()
+    if unit not in ("C", "F"):
+        unit = "C"
+    return lat, lon, unit
+
+
+def weather_url():
+    lat, lon, unit = weather_settings()
+    params = {
+        "latitude": f"{lat:.4f}",
+        "longitude": f"{lon:.4f}",
+        "current": "temperature_2m,weather_code",
+        "timezone": os.environ.get("DWMSTATUS_TZ") or "Asia/Jakarta",
+        "temperature_2m_unit": "fahrenheit" if unit == "F" else "celsius",
+    }
+    return WEATHER_API + "?" + urllib.parse.urlencode(params)
+
+
+def format_weather(data):
+    """Turn an Open-Meteo response into (glyph, label)."""
+    current = data.get("current") or {}
+    temp = current.get("temperature_2m")
+    code = current.get("weather_code")
+    if temp is None or code is None:
+        raise ValueError("incomplete weather response")
+    glyph, description = WEATHER_CODES.get(
+        int(code), ("\uf0c2", "Weather"))
+    _, _, unit = weather_settings()
+    return glyph, f"{temp:.0f}°{unit}  {description}"
+
+
+def read_weather_cache():
+    """Fresh cached result, or None."""
+    try:
+        if time.time() - os.path.getmtime(WEATHER_CACHE) > WEATHER_TTL:
+            return None
+        with open(WEATHER_CACHE, encoding="utf-8") as handle:
+            cached = json.load(handle)
+        return (cached["glyph"], cached["text"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def write_weather_cache(result):
+    glyph, text = result
+    tmp = f"{WEATHER_CACHE}.{os.getpid()}"
+    try:
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump({"glyph": glyph, "text": text}, handle)
+        os.replace(tmp, WEATHER_CACHE)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def fetch_weather():
+    """Cached weather, or a fallback glyph/label; never raises."""
+    cached = read_weather_cache()
+    if cached is not None:
+        return cached
+    try:
+        with urllib.request.urlopen(weather_url(), timeout=WEATHER_TIMEOUT) as reply:
+            result = format_weather(json.load(reply))
+        write_weather_cache(result)
+        return result
+    except Exception:
+        # A stale value is still more useful than an empty popup.
+        try:
+            with open(WEATHER_CACHE, encoding="utf-8") as handle:
+                cached = json.load(handle)
+            return cached["glyph"], cached["text"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return "\uf0c2", "Weather unavailable"
 
 
 def popup():
@@ -85,6 +214,36 @@ def popup():
     clock_box.pack_start(text_box, True, True, 0)
     content.pack_start(clock_box, False, False, 0)
     content.pack_start(Gtk.Separator(), False, False, 0)
+
+    # --- weather ----------------------------------------------------------
+    weather_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                          spacing=ICON_TEXT_GAP)
+    weather_box.set_border_width(6)
+    weather_glyph = Gtk.Label(label="\uf0c2")
+    weather_glyph.get_style_context().add_class("dwmstatus-icon")
+    weather_glyph.set_valign(Gtk.Align.CENTER)
+    weather_label = Gtk.Label(label="Loading weather…", xalign=0)
+    weather_label.get_style_context().add_class("dwmstatus-weather")
+    weather_box.pack_start(weather_glyph, False, False, 0)
+    weather_box.pack_start(weather_label, True, True, 0)
+    content.pack_start(weather_box, False, False, 0)
+    content.pack_start(Gtk.Separator(), False, False, 0)
+
+    def show_weather(result):
+        glyph, text = result
+        weather_glyph.set_label(glyph)
+        weather_label.set_text(text)
+        return False  # GLib.idle_add: run once
+
+    def weather_worker():
+        GLib.idle_add(show_weather, fetch_weather())
+
+    def refresh_weather():
+        threading.Thread(target=weather_worker, daemon=True).start()
+        return True  # keep the periodic timeout alive
+
+    refresh_weather()
+    GLib.timeout_add_seconds(WEATHER_TTL, refresh_weather)
 
     def tick_clock():
         now = datetime.datetime.now()

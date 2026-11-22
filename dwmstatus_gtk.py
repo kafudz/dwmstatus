@@ -32,6 +32,9 @@ BASE_CSS = """
     font-size: 11px;
     opacity: 0.75;
 }
+.dwmstatus-weather {
+    font-size: 14px;
+}
 .dwmstatus-error {
     color: #e5484d;
     font-size: 11px;
