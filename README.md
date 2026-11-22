@@ -83,9 +83,9 @@ A left click on the volume or power segment opens the system GTK 3 popup,
 `dwmstatus-popup`, focused on that section. A left click on the clock opens
 `dwmstatus-clock`, one popup that contains both the live clock and the calendar.
 All popups open right below their segment (above it for a bottom bar), with the
-window title `status`. The system popup is right-aligned with its panel; the
-clock popup is centred under the clock (or in the middle of the monitor when
-launched directly). Clicking the same segment again closes its popup, as do
+window title `status`. The system popup sits slightly left of its panel's right
+edge; the clock popup is centred under the clock (or in the middle of the
+monitor when launched directly). Clicking the same segment again closes its popup, as do
 `Esc`, `Return` and clicking elsewhere.
 
 The clock and calendar popup shows the live time and date at the top, followed
