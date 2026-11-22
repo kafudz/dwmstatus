@@ -70,7 +70,17 @@ Nilai
 menempatkan popup tepat di bawah segmennya; popup jam memakainya.
 .TP
 .B DWMSTATUS_TZ
-Zona waktu jam di bar dan popup jam/kalender (default: Asia/Jakarta).
+Zona waktu jam di bar, popup jam/kalender, dan cuaca (default: Asia/Jakarta).
+.TP
+.BR DWMSTATUS_LAT ", " DWMSTATUS_LON
+Lokasi untuk cuaca popup, memakai Open-Meteo tanpa kunci API (default:
+-6.2088, 106.8456).
+.TP
+.B DWMSTATUS_WEATHER_UNIT
+.B C
+atau
+.B F
+untuk suhu cuaca di popup (default: C).
 .TP
 .BR DWMSTATUS_LOCK ", " DWMSTATUS_LOGOUT ", " DWMSTATUS_SUSPEND ", " DWMSTATUS_REBOOT ", " DWMSTATUS_POWEROFF
 Perintah menu daya. Nilainya dipecah seperti shell tetapi tidak dijalankan
@@ -124,8 +134,11 @@ memfokuskan bagian yang sesuai. Popup memerlukan Python 3, PyGObject, dan GTK 3.
 .SH JAM DAN KALENDER
 Klik kiri pada segmen jam menjalankan
 .BR dwmstatus-clock ,
-satu popup GTK 3 berisi jam dan tanggal di bagian atas, lalu kalender bulan
-berjalan dengan tombol navigasi bulan sebelumnya dan berikutnya.
+satu popup GTK 3 berisi jam dan tanggal di bagian atas, ringkasan cuaca
+(ikon, suhu, dan kondisi) di bawahnya, lalu kalender bulan berjalan dengan
+tombol navigasi bulan sebelumnya dan berikutnya. Cuaca diambil dari Open-Meteo
+di latar belakang dan disimpan selama 10 menit; bila jaringan mati, nilai
+terakhir tetap dipakai, atau popup menulis bahwa cuaca tidak tersedia.
 Skrip
 .B dwmstatus-calendar
 tetap tersedia sebagai alias kompatibilitas dan membuka popup gabungan yang

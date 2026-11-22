@@ -75,7 +75,9 @@ root window name so dwm does not show its `dwm-x.y` banner next to the panel.
 | `DWMSTATUS_POPUP` | `dwmstatus-popup` | system popup (volume, power, ...) |
 | `DWMSTATUS_CLOCK` | `dwmstatus-clock` | clock and calendar popup |
 | `DWMSTATUS_PANEL_ALIGN` | `right` | `center` centres a popup under its segment; the clock uses it |
-| `DWMSTATUS_TZ` | `Asia/Jakarta` | time zone of the bar clock and the popup |
+| `DWMSTATUS_TZ` | `Asia/Jakarta` | time zone of the bar clock, popup and weather |
+| `DWMSTATUS_LAT`, `_LON` | `-6.2088`, `106.8456` | weather location (Open-Meteo, no API key) |
+| `DWMSTATUS_WEATHER_UNIT` | `C` | `C` or `F` for the popup weather temperature |
 | `DWMSTATUS_LOCK`, `_LOGOUT`, `_SUSPEND`, `_REBOOT`, `_POWEROFF` | auto | power menu commands |
 
 ## Click actions
@@ -89,9 +91,13 @@ edge; the clock popup is centred under the clock (or in the middle of the
 monitor when launched directly). Clicking the same segment again closes its popup, as do
 `Esc`, `Return` and clicking elsewhere.
 
-The clock and calendar popup shows the live time and date at the top, followed
-by the current month with its own `<` / `>` month navigation.
-`dwmstatus-calendar` remains as a compatibility alias for `dwmstatus-clock`.
+The clock and calendar popup shows the live time and date at the top, a compact
+weather summary (icon, temperature and condition) below it, then the current
+month with its own `<` / `>` month navigation. Weather is fetched from
+Open-Meteo in the background and cached for 10 minutes; if the network is down
+the last known reading is kept, otherwise the popup simply says it is
+unavailable. `dwmstatus-calendar` remains as a compatibility alias for
+`dwmstatus-clock`.
 
 Sections of the system popup, top to bottom (those without a working backend
 are hidden):
