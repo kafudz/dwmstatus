@@ -13,10 +13,11 @@ tombol daya tetap di ujung kanan. Panel ini
 menulis teks status dwm (nama root window) dan tidak memerlukan patch dwm;
 klik ditangani oleh panel itu sendiri.
 .P
-Bar menampilkan segmen Nerd Font dari kiri ke kanan: volume, jam (ikon dan teks
-jam), dan tombol daya. Bagian yang tidak tersedia (misalnya volume saat tidak
-ada sink audio) disembunyikan. Volume dan tombol daya membuka popup sistem;
-jam membuka satu popup gabungan berisi jam dan kalender.
+Bar menampilkan segmen Nerd Font dari kiri ke kanan: indikator Caps Lock (⇪,
+hanya saat aktif), volume, jam (ikon dan teks jam), dan tombol daya. Bagian yang
+tidak tersedia (misalnya volume saat tidak ada sink audio) disembunyikan. Caps
+Lock diperbarui dari event XKB, bukan polling. Volume dan tombol daya membuka
+popup sistem; jam membuka satu popup gabungan berisi jam dan kalender.
 .P
 Volume (melalui
 .BR wpctl (1))
@@ -47,8 +48,9 @@ Cetak versi lalu keluar.
 .B DWMSTATUS_FONT
 Keluarga font Nerd Font (default: JetBrainsMono Nerd Font).
 .TP
-.BR DWMSTATUS_BG ", " DWMSTATUS_FG ", " DWMSTATUS_DIM
-Warna dalam format #rrggbb. Samakan DWMSTATUS_BG dengan bar dwm.
+.BR DWMSTATUS_BG ", " DWMSTATUS_FG ", " DWMSTATUS_DIM ", " DWMSTATUS_ACCENT
+Warna dalam format #rrggbb. Samakan DWMSTATUS_BG dengan bar dwm; ACCENT dipakai
+saat Caps Lock aktif.
 .TP
 .B DWMSTATUS_HEIGHT
 Tinggi panel bila bar dwm tidak ditemukan (default: 24).

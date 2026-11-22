@@ -361,6 +361,147 @@ def popup(initial):
         content.pack_start(pwr_box, False, False, 0)
         sections["pwr"] = (pwr_box, first_power_button[0])
 
+    # --- brightness -------------------------------------------------------
+    bri_backend = backend.detect_brightness()
+    bri_state = backend.brightness_state(bri_backend) if bri_backend else None
+    bri_scale = None
+    if bri_state is not None:
+        if sections:
+            content.pack_start(Gtk.Separator(), False, False, 0)
+        bri_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        bri_box.set_border_width(6)
+        bri_value = Gtk.Label(label=f"{bri_state[0]}%", xalign=1)
+        bri_scale = slider()
+        bri_scale.set_value(bri_state[0])
+
+        def apply_brightness():
+            pending.pop("bri", None)
+            level = int(round(bri_scale.get_value()))
+            backend.set_brightness(bri_backend, level)
+            bri_value.set_text(f"{level}%")
+            return False
+
+        def on_brightness(widget):
+            bri_value.set_text(f"{int(round(widget.get_value()))}%")
+            if "bri" in pending:
+                GLib.source_remove(pending["bri"])
+            pending["bri"] = GLib.timeout_add(60, apply_brightness)
+
+        bri_scale.connect("value-changed", on_brightness)
+        bri_box.pack_start(heading(ICON_BRIGHTNESS, "Brightness", bri_value),
+                           False, False, 0)
+        bri_box.pack_start(bri_scale, False, False, 0)
+        content.pack_start(bri_box, False, False, 0)
+        sections["bri"] = (bri_box, bri_scale)
+
+    # --- volume -----------------------------------------------------------
+    vol_backend = backend.detect_volume()
+    vol_state = backend.volume_state(vol_backend) if vol_backend else None
+    vol_scale = None
+    if vol_state is not None:
+        if sections:
+            content.pack_start(Gtk.Separator(), False, False, 0)
+        vol_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        vol_box.set_border_width(6)
+        vol_value = Gtk.Label(label=f"{vol_state[0]}%", xalign=1)
+        vol_icon = icon(ICON_VOL_HIGH)
+        vol_scale = slider()
+        vol_scale.set_value(vol_state[0])
+        muted_now = [bool(vol_state[1])]
+        mute = Gtk.Button(label="Unmute" if muted_now[0] else "Mute")
+
+        def update_volume_icon():
+            level = int(round(vol_scale.get_value()))
+            if muted_now[0] or level == 0:
+                glyph = ICON_VOL_OFF
+            elif level < 50:
+                glyph = ICON_VOL_LOW
+            else:
+                glyph = ICON_VOL_HIGH
+            vol_icon.set_text(glyph)
+
+        update_volume_icon()
+
+        def apply_volume():
+            pending.pop("vol", None)
+            level = int(round(vol_scale.get_value()))
+            if muted_now[0]:
+                backend.set_mute(vol_backend, False)
+                muted_now[0] = False
+                mute.set_label("Mute")
+            backend.set_volume(vol_backend, level)
+            vol_value.set_text(f"{level}%")
+            update_volume_icon()
+            return False
+
+        def on_volume(widget):
+            vol_value.set_text(f"{int(round(widget.get_value()))}%")
+            update_volume_icon()
+            if "vol" in pending:
+                GLib.source_remove(pending["vol"])
+            pending["vol"] = GLib.timeout_add(60, apply_volume)
+
+        def on_mute(button):
+            muted_now[0] = not muted_now[0]
+            backend.set_mute(vol_backend, muted_now[0])
+            button.set_label("Unmute" if muted_now[0] else "Mute")
+            update_volume_icon()
+
+        vol_scale.connect("value-changed", on_volume)
+        mute.connect("clicked", on_mute)
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        name = Gtk.Label(label="Volume", xalign=0)
+        name.get_style_context().add_class("dwmstatus-title")
+        head.pack_start(vol_icon, False, False, 0)
+        head.pack_start(name, True, True, 0)
+        head.pack_end(vol_value, False, False, 0)
+        vol_box.pack_start(head, False, False, 0)
+        vol_box.pack_start(vol_scale, False, False, 0)
+        vol_box.pack_start(mute, False, False, 0)
+        content.pack_start(vol_box, False, False, 0)
+        sections["vol"] = (vol_box, vol_scale)
+
+    # --- battery ----------------------------------------------------------
+    bat_state = backend.battery_state()
+    if bat_state is not None:
+        percent, status = bat_state
+        if sections:
+            content.pack_start(Gtk.Separator(), False, False, 0)
+
+        if percent >= 88:
+            glyph = ICON_BAT_FULL
+        elif percent >= 63:
+            glyph = ICON_BAT_3Q
+        elif percent >= 38:
+            glyph = ICON_BAT_HALF
+        elif percent >= 13:
+            glyph = ICON_BAT_1Q
+        else:
+            glyph = ICON_BAT_EMPTY
+        if status == "Charging":
+            glyph = f"{ICON_BOLT}  {glyph}"
+
+        bat_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        bat_box.set_border_width(6)
+        bat_text = f"{percent}%"
+        if status:
+            bat_text = f"{bat_text}  {status}"
+        bat_value = Gtk.Label(label=bat_text, xalign=1)
+
+        level = Gtk.LevelBar()
+        level.set_mode(Gtk.LevelBarMode.CONTINUOUS)
+        level.set_min_value(0)
+        level.set_max_value(100)
+        level.set_value(percent)
+        level.set_size_request(280, -1)
+        level.get_style_context().add_class("dwmstatus-level")
+
+        bat_box.pack_start(heading(glyph, "Battery", bat_value),
+                           False, False, 0)
+        bat_box.pack_start(level, False, False, 0)
+        content.pack_start(bat_box, False, False, 0)
+        sections["bat"] = (bat_box, level)
+
     # --- network (NetworkManager) -----------------------------------------
     net_state = [None]
     if backend.nm_available():
@@ -607,145 +748,6 @@ def popup(initial):
         if initial == "bt":
             bt_expander.set_expanded(True)
         refresh_bt()
-
-    # --- brightness -------------------------------------------------------
-    bri_backend = backend.detect_brightness()
-    bri_state = backend.brightness_state(bri_backend) if bri_backend else None
-    bri_scale = None
-    if bri_state is not None:
-        bri_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        bri_box.set_border_width(6)
-        bri_value = Gtk.Label(label=f"{bri_state[0]}%", xalign=1)
-        bri_scale = slider()
-        bri_scale.set_value(bri_state[0])
-
-        def apply_brightness():
-            pending.pop("bri", None)
-            level = int(round(bri_scale.get_value()))
-            backend.set_brightness(bri_backend, level)
-            bri_value.set_text(f"{level}%")
-            return False
-
-        def on_brightness(widget):
-            bri_value.set_text(f"{int(round(widget.get_value()))}%")
-            if "bri" in pending:
-                GLib.source_remove(pending["bri"])
-            pending["bri"] = GLib.timeout_add(60, apply_brightness)
-
-        bri_scale.connect("value-changed", on_brightness)
-        bri_box.pack_start(heading(ICON_BRIGHTNESS, "Brightness", bri_value),
-                           False, False, 0)
-        bri_box.pack_start(bri_scale, False, False, 0)
-        content.pack_start(bri_box, False, False, 0)
-        sections["bri"] = (bri_box, bri_scale)
-
-    # --- volume -----------------------------------------------------------
-    vol_backend = backend.detect_volume()
-    vol_state = backend.volume_state(vol_backend) if vol_backend else None
-    vol_scale = None
-    if vol_state is not None:
-        if sections:
-            content.pack_start(Gtk.Separator(), False, False, 0)
-        vol_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        vol_box.set_border_width(6)
-        vol_value = Gtk.Label(label=f"{vol_state[0]}%", xalign=1)
-        vol_icon = icon(ICON_VOL_HIGH)
-        vol_scale = slider()
-        vol_scale.set_value(vol_state[0])
-        muted_now = [bool(vol_state[1])]
-        mute = Gtk.Button(label="Unmute" if muted_now[0] else "Mute")
-
-        def update_volume_icon():
-            level = int(round(vol_scale.get_value()))
-            if muted_now[0] or level == 0:
-                glyph = ICON_VOL_OFF
-            elif level < 50:
-                glyph = ICON_VOL_LOW
-            else:
-                glyph = ICON_VOL_HIGH
-            vol_icon.set_text(glyph)
-
-        update_volume_icon()
-
-        def apply_volume():
-            pending.pop("vol", None)
-            level = int(round(vol_scale.get_value()))
-            if muted_now[0]:
-                backend.set_mute(vol_backend, False)
-                muted_now[0] = False
-                mute.set_label("Mute")
-            backend.set_volume(vol_backend, level)
-            vol_value.set_text(f"{level}%")
-            update_volume_icon()
-            return False
-
-        def on_volume(widget):
-            vol_value.set_text(f"{int(round(widget.get_value()))}%")
-            update_volume_icon()
-            if "vol" in pending:
-                GLib.source_remove(pending["vol"])
-            pending["vol"] = GLib.timeout_add(60, apply_volume)
-
-        def on_mute(button):
-            muted_now[0] = not muted_now[0]
-            backend.set_mute(vol_backend, muted_now[0])
-            button.set_label("Unmute" if muted_now[0] else "Mute")
-            update_volume_icon()
-
-        vol_scale.connect("value-changed", on_volume)
-        mute.connect("clicked", on_mute)
-        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        name = Gtk.Label(label="Volume", xalign=0)
-        name.get_style_context().add_class("dwmstatus-title")
-        head.pack_start(vol_icon, False, False, 0)
-        head.pack_start(name, True, True, 0)
-        head.pack_end(vol_value, False, False, 0)
-        vol_box.pack_start(head, False, False, 0)
-        vol_box.pack_start(vol_scale, False, False, 0)
-        vol_box.pack_start(mute, False, False, 0)
-        content.pack_start(vol_box, False, False, 0)
-        sections["vol"] = (vol_box, vol_scale)
-
-    # --- battery ----------------------------------------------------------
-    bat_state = backend.battery_state()
-    if bat_state is not None:
-        percent, status = bat_state
-        if sections:
-            content.pack_start(Gtk.Separator(), False, False, 0)
-
-        if percent >= 88:
-            glyph = ICON_BAT_FULL
-        elif percent >= 63:
-            glyph = ICON_BAT_3Q
-        elif percent >= 38:
-            glyph = ICON_BAT_HALF
-        elif percent >= 13:
-            glyph = ICON_BAT_1Q
-        else:
-            glyph = ICON_BAT_EMPTY
-        if status == "Charging":
-            glyph = f"{ICON_BOLT}  {glyph}"
-
-        bat_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        bat_box.set_border_width(6)
-        bat_text = f"{percent}%"
-        if status:
-            bat_text = f"{bat_text}  {status}"
-        bat_value = Gtk.Label(label=bat_text, xalign=1)
-
-        level = Gtk.LevelBar()
-        level.set_mode(Gtk.LevelBarMode.CONTINUOUS)
-        level.set_min_value(0)
-        level.set_max_value(100)
-        level.set_value(percent)
-        level.set_size_request(280, -1)
-        level.get_style_context().add_class("dwmstatus-level")
-
-        bat_box.pack_start(heading(glyph, "Battery", bat_value),
-                           False, False, 0)
-        bat_box.pack_start(level, False, False, 0)
-        content.pack_start(bat_box, False, False, 0)
-        sections["bat"] = (bat_box, level)
 
     # The popup got taller with the new sections.  Scroll instead of running
     # off a small screen: it never gets taller than the room next to the panel.

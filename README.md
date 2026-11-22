@@ -21,6 +21,7 @@ machine is hidden.
 
 | Segment | Meaning | Source |
 | ------- | ------- | ------ |
+| caps | Caps Lock indicator, shown only while active (⇪) | XKB |
 | vol | volume, dimmed when muted | `wpctl` |
 | tim | clock icon and live time; opens the clock and calendar popup | always shown |
 | pwr | power button; opens the power menu | always shown |
@@ -68,7 +69,7 @@ root window name so dwm does not show its `dwm-x.y` banner next to the panel.
 | -------- | ------- | - |
 | `DWMSTATUS_FONT` | `JetBrainsMono Nerd Font` | font family (Nerd Font) |
 | `DWMSTATUS_BG` | `#101113` | background; match your dwm bar |
-| `DWMSTATUS_FG`, `_DIM` | see source | `#rrggbb` colours |
+| `DWMSTATUS_FG`, `_DIM`, `_ACCENT` | see source | `#rrggbb` colours (accent = Caps Lock on) |
 | `DWMSTATUS_HEIGHT` | `24` | panel height when no dwm bar is found |
 | `DWMSTATUS_POPUP` | `dwmstatus-popup` | system popup (volume, power, ...) |
 | `DWMSTATUS_CLOCK` | `dwmstatus-clock` | clock and calendar popup |
@@ -97,12 +98,15 @@ are hidden):
 - **Power**: Lock, Log out, Suspend, Reboot, Power off. Log out, Reboot and
   Power off ask for confirmation first (the focus starts on *Cancel*).
   Also shows the uptime.
+- **Brightness**, **Volume** (with mute) and **Battery**.
 - **Network** (NetworkManager): current connection and IP, Wi-Fi on/off switch,
   and a list of nearby networks. Click one to connect, click the active one to
   disconnect. A new secured network asks for its password.
 - **Bluetooth** (BlueZ): power switch and the paired devices; click one to
   connect or disconnect it.
-- **Brightness**, **Volume** (with mute) and **Battery**.
+
+Network and Bluetooth sit below Battery, so the brightness/volume sliders and
+battery state stay near the top of the popup.
 
 The popups need Python 3, PyGObject and GTK 3 (Arch packages `python`,
 `python-gobject`, `gtk3`). Backends:
