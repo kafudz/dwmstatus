@@ -5,7 +5,7 @@ and battery popup.
 A left click on the volume or power segment of the dwmstatus panel opens this
 window.  Passing "pwr", "net", "bt", "bri", "vol" or "bat" focuses the matching
 section, so clicking an indicator opens the popup at that control.  The clock
-segment uses the separate dwmstatus-clock popup instead.
+segment uses the separate combined clock and calendar popup instead.
 
 Sections that have no working backend are hidden (no NetworkManager, no
 Bluetooth controller, ...).

@@ -7,15 +7,15 @@ no dwm patch; it handles its own clicks.
 
 Segments, left to right (a segment that is not available is hidden):
     vol   volume (wpctl)
-    tim   clock (left click: clock popup; right click: calendar popup)
+    tim   clock icon and time (opens the clock and calendar popup)
     pwr   power button (opens the power menu)
 
 A left click on a segment runs a popup next to the panel. Volume and power run
 `dwmstatus-popup <name>`, the GTK popup with power, network, Bluetooth,
-brightness, volume and battery. The clock runs `dwmstatus-clock`; a right click
-on it runs `dwmstatus-calendar`. Both are separate popups. The panel finds
-dwm's bar window (WM_CLASS dwm/dwm) and follows its position and height, so it
-also works with a bottom bar and hides while dwm's bar is hidden (showbar off).
+brightness, volume and battery. The clock runs `dwmstatus-clock`, the combined
+clock and calendar popup. The panel finds dwm's bar window (WM_CLASS dwm/dwm)
+and follows its position and height, so it also works with a bottom bar and
+hides while dwm's bar is hidden (showbar off).
 
 Requires a Nerd Font, e.g. "JetBrainsMono Nerd Font" (override with
 DWMSTATUS_FONT). Colours can be overridden with DWMSTATUS_BG, DWMSTATUS_FG and
@@ -74,7 +74,7 @@ struct segment {
 
 static struct segment segs[] = {
     { "vol", "vol", "",          COL_FG, 0, 0 },
-    { "tim", "tim", ICON_CLOCK,  COL_FG, 0, 0 },
+    { "tim", "tim", "",          COL_FG, 0, 0 },
     { "pwr", "pwr", ICON_POWER,  COL_FG, 0, 0 },
 };
 #define NSEG (sizeof(segs) / sizeof(segs[0]))
@@ -405,14 +405,47 @@ setseg(struct segment *s, const char *text, int color)
     return 1;
 }
 
+static struct segment *
+find_segment(const char *name)
+{
+    size_t i;
+
+    for (i = 0; i < NSEG; i++)
+        if (strcmp(segs[i].name, name) == 0)
+            return &segs[i];
+    return NULL;
+}
+
 static int
 refresh_volume(void)
 {
     char buf[32];
     int color;
+    struct segment *s = find_segment("vol");
 
+    if (s == NULL)
+        return 0;
     get_volume(buf, sizeof(buf), &color);
-    return setseg(&segs[0], buf, color);
+    return setseg(s, buf, color);
+}
+
+static int
+refresh_clock(void)
+{
+    struct segment *s = find_segment("tim");
+    struct tm tm;
+    char text[16], buf[32];
+    time_t now;
+
+    if (s == NULL)
+        return 0;
+    now = time(NULL);
+    if (localtime_r(&now, &tm) == NULL)
+        return 0;
+    if (strftime(text, sizeof(text), "%H:%M", &tm) == 0)
+        return 0;
+    snprintf(buf, sizeof(buf), "%s %s", ICON_CLOCK, text);
+    return setseg(s, buf, COL_FG);
 }
 
 /* ------------------------------------------------------------------ fonts */
@@ -824,18 +857,14 @@ spawn_popup(const char *arg)
     pid_t pid;
 
     /*
-     * The clock and the calendar have their own light popups; everything
-     * else opens the combined system popup. All can be overridden from the
+     * The clock has its own combined clock and calendar popup; everything
+     * else opens the system popup. Both can be overridden from the
      * environment.
      */
     if (strcmp(arg, "tim") == 0) {
         cmd = getenv("DWMSTATUS_CLOCK");
         if (cmd == NULL || cmd[0] == '\0')
             cmd = "dwmstatus-clock";
-    } else if (strcmp(arg, "cal") == 0) {
-        cmd = getenv("DWMSTATUS_CALENDAR");
-        if (cmd == NULL || cmd[0] == '\0')
-            cmd = "dwmstatus-calendar";
     } else {
         cmd = getenv("DWMSTATUS_POPUP");
         if (cmd == NULL || cmd[0] == '\0')
@@ -862,7 +891,7 @@ spawn_popup(const char *arg)
             if (devnull > STDERR_FILENO)
                 close(devnull);
         }
-        if (strcmp(arg, "tim") == 0 || strcmp(arg, "cal") == 0)
+        if (strcmp(arg, "tim") == 0)
             execlp(cmd, cmd, (char *)NULL);
         else
             execlp(cmd, cmd, arg, (char *)NULL);
@@ -877,18 +906,14 @@ buttonpress(XButtonEvent *ev)
 {
     size_t i;
 
-    for (i = 0; i < NSEG; i++) {
-        if (segs[i].w == 0 || ev->x < segs[i].x ||
-            ev->x >= segs[i].x + segs[i].w)
-            continue;
-        /* Left click opens the segment's popup; right click on the clock
-         * opens the calendar popup instead. */
-        if (ev->button == Button1)
-            spawn_popup(segs[i].arg);
-        else if (ev->button == Button3 &&
-                 strcmp(segs[i].arg, "tim") == 0)
-            spawn_popup("cal");
+    if (ev->button != Button1)
         return;
+    for (i = 0; i < NSEG; i++) {
+        if (segs[i].w > 0 && ev->x >= segs[i].x &&
+            ev->x < segs[i].x + segs[i].w) {
+            spawn_popup(segs[i].arg);
+            return;
+        }
     }
 }
 
@@ -977,6 +1002,16 @@ main(int argc, char *argv[])
     parse_color("DWMSTATUS_FG", COL_FG);
     parse_color("DWMSTATUS_DIM", COL_DIM);
 
+    /* The bar clock and the popup clock use the same time zone. */
+    {
+        const char *tz = getenv("DWMSTATUS_TZ");
+
+        if (tz == NULL || tz[0] == '\0')
+            tz = "Asia/Jakarta";
+        setenv("TZ", tz, 1);
+        tzset();
+    }
+
     /*
      * Older versions put the status in dwm's bar through the root window
      * name and _DWMSTATUS_SEGMENTS. Remove those; a single space also stops
@@ -987,6 +1022,7 @@ main(int argc, char *argv[])
 
     discover();
     refresh_volume();
+    refresh_clock();
     update_panel(1, 1);
 
     now = now_ms();
@@ -1025,6 +1061,7 @@ main(int argc, char *argv[])
         }
         if (now >= next_tick) {
             tick++;
+            changed |= refresh_clock();
             /* geometry of dwm's bar, with an occasional full search */
             update_panel(tick % BAR_RESCAN_TICKS == 0, changed || redraw);
             changed = redraw = 0;
