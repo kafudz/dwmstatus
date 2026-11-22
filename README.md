@@ -102,7 +102,7 @@ unavailable. `dwmstatus-calendar` remains as a compatibility alias for
 Sections of the system popup, top to bottom (those without a working backend
 are hidden):
 
-- **Brightness**, **Volume** (with mute) and **Battery**.
+- **Volume** (with mute), **Brightness** and **Battery**.
 - **Network** (NetworkManager): current connection and IP, Wi-Fi on/off switch,
   and a list of nearby networks. Click one to connect, click the active one to
   disconnect. A new secured network asks for its password.
