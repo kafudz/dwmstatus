@@ -177,13 +177,16 @@ def placement(display):
 
 def present(win, content, geometry, place, Gtk, Gdk, GLib):
     """Show the window, keep it next to the panel and wire up dismissal."""
-    # Scroll instead of running off a small screen: never taller than the
-    # room next to the panel.
+    # Keep the whole window inside the monitor: cap the scrolled content with
+    # the window border subtracted, and allow horizontal scrolling if needed.
+    padding = 2 * win.get_border_width()
     scrolled = Gtk.ScrolledWindow()
-    scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
     scrolled.set_shadow_type(Gtk.ShadowType.NONE)
     scrolled.set_propagate_natural_height(True)
-    scrolled.set_max_content_height(place["avail"])
+    scrolled.set_max_content_height(max(1, place["avail"] - padding))
+    if geometry is not None and hasattr(scrolled, "set_max_content_width"):
+        scrolled.set_max_content_width(max(1, geometry.width - padding - 20))
     if hasattr(scrolled, "set_propagate_natural_width"):  # GTK >= 3.22
         scrolled.set_propagate_natural_width(True)
     scrolled.add(content)
@@ -219,7 +222,8 @@ def present(win, content, geometry, place, Gtk, Gdk, GLib):
             return None
         x = max(geometry.x, min(x, geometry.x + geometry.width - width))
         y = place["edge"] if place["below"] else place["edge"] - height
-        return x, max(geometry.y, y)
+        y = max(geometry.y, min(y, geometry.y + geometry.height - height))
+        return x, y
 
     # GTK cannot measure its natural size before it is mapped, but even an
     # approximate pre-map position keeps the window from flashing at (0, 0)
