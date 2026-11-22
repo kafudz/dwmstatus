@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""dwmstatus-popup - combined power, network, Bluetooth, brightness, volume
+"""dwmstatus-popup - combined power, network, Bluetooth, volume, brightness
 and battery popup.
 
 A left click on the volume or power segment of the dwmstatus panel opens this
@@ -304,39 +304,6 @@ def popup(initial):
         for child in box.get_children():
             box.remove(child)
 
-    # --- brightness -------------------------------------------------------
-    bri_backend = backend.detect_brightness()
-    bri_state = backend.brightness_state(bri_backend) if bri_backend else None
-    bri_scale = None
-    if bri_state is not None:
-        if sections:
-            content.pack_start(Gtk.Separator(), False, False, 0)
-        bri_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        bri_box.set_border_width(6)
-        bri_value = Gtk.Label(label=f"{bri_state[0]}%", xalign=1)
-        bri_scale = slider()
-        bri_scale.set_value(bri_state[0])
-
-        def apply_brightness():
-            pending.pop("bri", None)
-            level = int(round(bri_scale.get_value()))
-            backend.set_brightness(bri_backend, level)
-            bri_value.set_text(f"{level}%")
-            return False
-
-        def on_brightness(widget):
-            bri_value.set_text(f"{int(round(widget.get_value()))}%")
-            if "bri" in pending:
-                GLib.source_remove(pending["bri"])
-            pending["bri"] = GLib.timeout_add(60, apply_brightness)
-
-        bri_scale.connect("value-changed", on_brightness)
-        bri_box.pack_start(heading(ICON_BRIGHTNESS, "Brightness", bri_value),
-                           False, False, 0)
-        bri_box.pack_start(bri_scale, False, False, 0)
-        content.pack_start(bri_box, False, False, 0)
-        sections["bri"] = (bri_box, bri_scale)
-
     # --- volume -----------------------------------------------------------
     vol_backend = backend.detect_volume()
     vol_state = backend.volume_state(vol_backend) if vol_backend else None
@@ -403,6 +370,39 @@ def popup(initial):
         vol_box.pack_start(mute, False, False, 0)
         content.pack_start(vol_box, False, False, 0)
         sections["vol"] = (vol_box, vol_scale)
+
+    # --- brightness -------------------------------------------------------
+    bri_backend = backend.detect_brightness()
+    bri_state = backend.brightness_state(bri_backend) if bri_backend else None
+    bri_scale = None
+    if bri_state is not None:
+        if sections:
+            content.pack_start(Gtk.Separator(), False, False, 0)
+        bri_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        bri_box.set_border_width(6)
+        bri_value = Gtk.Label(label=f"{bri_state[0]}%", xalign=1)
+        bri_scale = slider()
+        bri_scale.set_value(bri_state[0])
+
+        def apply_brightness():
+            pending.pop("bri", None)
+            level = int(round(bri_scale.get_value()))
+            backend.set_brightness(bri_backend, level)
+            bri_value.set_text(f"{level}%")
+            return False
+
+        def on_brightness(widget):
+            bri_value.set_text(f"{int(round(widget.get_value()))}%")
+            if "bri" in pending:
+                GLib.source_remove(pending["bri"])
+            pending["bri"] = GLib.timeout_add(60, apply_brightness)
+
+        bri_scale.connect("value-changed", on_brightness)
+        bri_box.pack_start(heading(ICON_BRIGHTNESS, "Brightness", bri_value),
+                           False, False, 0)
+        bri_box.pack_start(bri_scale, False, False, 0)
+        content.pack_start(bri_box, False, False, 0)
+        sections["bri"] = (bri_box, bri_scale)
 
     # --- battery ----------------------------------------------------------
     bat_state = backend.battery_state()
