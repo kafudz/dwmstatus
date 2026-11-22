@@ -6,27 +6,24 @@ over the right end of dwm's bar. It does NOT write dwm's status text and needs
 no dwm patch; it handles its own clicks.
 
 Segments, left to right (a segment that is not available is hidden):
-    caps  Caps Lock (only while active)
-    net   network state (wired / Wi-Fi, from sysfs)
-    bt    Bluetooth (adapter present, rfkill, active connections, from sysfs)
     vol   volume (wpctl)
-    bat   battery (sysfs)
-    pwr   power button
+    tim   clock (left click: clock popup; right click: calendar popup)
+    pwr   power button (opens the power menu)
 
-A left click on a segment runs `dwmstatus-popup <name>`, the combined GTK
-popup (clock, network, Bluetooth, brightness, volume, battery, calendar and
-the power menu). The panel finds dwm's bar window (WM_CLASS dwm/dwm) and
-follows its position and height, so it also works with a bottom bar and hides
-while dwm's bar is hidden (showbar off).
+A left click on a segment runs a popup next to the panel. Volume and power run
+`dwmstatus-popup <name>`, the GTK popup with power, network, Bluetooth,
+brightness, volume and battery. The clock runs `dwmstatus-clock`; a right click
+on it runs `dwmstatus-calendar`. Both are separate popups. The panel finds
+dwm's bar window (WM_CLASS dwm/dwm) and follows its position and height, so it
+also works with a bottom bar and hides while dwm's bar is hidden (showbar off).
 
 Requires a Nerd Font, e.g. "JetBrainsMono Nerd Font" (override with
-DWMSTATUS_FONT). Colours can be overridden with DWMSTATUS_BG, DWMSTATUS_FG,
-DWMSTATUS_DIM, DWMSTATUS_ACCENT, DWMSTATUS_WARN and DWMSTATUS_OK (#rrggbb).
+DWMSTATUS_FONT). Colours can be overridden with DWMSTATUS_BG, DWMSTATUS_FG and
+DWMSTATUS_DIM (#rrggbb).
 
 Build: see Makefile (needs cairo and X11).
 */
 
-#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -40,7 +37,6 @@ Build: see Makefile (needs cairo and X11).
 #include <time.h>
 #include <unistd.h>
 #include <X11/Xlib.h>
-#include <X11/XKBlib.h>
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
 #include <cairo/cairo.h>
@@ -50,62 +46,36 @@ Build: see Makefile (needs cairo and X11).
 #define VERSION "unknown"
 #endif
 
-/* Intervals (milliseconds). Caps Lock is event driven and needs no polling. */
-#define TICK_INTERVAL_MS       1000  /* sysfs state, dwm bar geometry */
+/* Intervals (milliseconds). */
+#define TICK_INTERVAL_MS       1000  /* dwm bar geometry */
 #define VOLUME_INTERVAL_MS     2000  /* spawning wpctl is the expensive part */
 #define VOLUME_TIMEOUT_MS       200  /* do not let a stuck wpctl freeze us */
-#define DISCOVERY_INTERVAL_MS 30000  /* re-scan for hotplugged devices */
+#define DISCOVERY_INTERVAL_MS 30000  /* re-scan for the wpctl path */
 #define BAR_RESCAN_TICKS         10  /* full search for dwm's bar window */
 
 #define FALLBACK_HEIGHT 24           /* when dwm's bar cannot be found */
-
-/* sysfs locations; overridable with -D for testing against a fake tree */
-#ifndef PSDIR
-#define PSDIR  "/sys/class/power_supply"
-#endif
-#ifndef NETDIR
-#define NETDIR "/sys/class/net"
-#endif
-#ifndef BTDIR
-#define BTDIR  "/sys/class/bluetooth"
-#endif
-#ifndef RFKDIR
-#define RFKDIR "/sys/class/rfkill"
-#endif
 
 /* Nerd Font icons as UTF-8 byte sequences */
 #define ICON_VOL_OFF      "\xef\x80\xa6"  /* U+F026 nf-fa-volume_off */
 #define ICON_VOL_LOW      "\xef\x80\xa7"  /* U+F027 nf-fa-volume_down */
 #define ICON_VOL_HIGH     "\xef\x80\xa8"  /* U+F028 nf-fa-volume_up */
-#define ICON_BAT_FULL     "\xef\x89\x80"  /* U+F240 nf-fa-battery_full */
-#define ICON_BAT_3Q       "\xef\x89\x81"  /* U+F241 nf-fa-battery_three_quarters */
-#define ICON_BAT_HALF     "\xef\x89\x82"  /* U+F242 nf-fa-battery_half */
-#define ICON_BAT_1Q       "\xef\x89\x83"  /* U+F243 nf-fa-battery_quarter */
-#define ICON_BAT_EMPTY    "\xef\x89\x84"  /* U+F244 nf-fa-battery_empty */
-#define ICON_BOLT         "\xef\x83\xa7"  /* U+F0E7 nf-fa-bolt */
-#define ICON_CAPS_ON      "\xe2\x87\xaa"  /* U+21EA CAPS LOCK */
-#define ICON_WIFI         "\xef\x87\xab"  /* U+F1EB nf-fa-wifi */
-#define ICON_WIRED        "\xef\x82\xac"  /* U+F0AC nf-fa-globe */
-#define ICON_BLUETOOTH    "\xef\x8a\x93"  /* U+F293 nf-fa-bluetooth */
+#define ICON_CLOCK        "\xef\x80\x97"  /* U+F017 nf-fa-clock_o */
 #define ICON_POWER        "\xef\x80\x91"  /* U+F011 nf-fa-power_off */
 
-enum { COL_BG, COL_FG, COL_DIM, COL_ACCENT, COL_WARN, COL_OK, NCOL };
+enum { COL_BG, COL_FG, COL_DIM, NCOL };
 
 struct segment {
     const char *name;   /* segment name (documentation / debugging) */
-    const char *arg;    /* argument passed to dwmstatus-popup */
+    const char *arg;    /* argument passed to the popup */
     char text[32];      /* UTF-8 icon(s); empty = hidden */
     int color;
     int x, w;           /* position inside the panel (valid after layout) */
 };
 
 static struct segment segs[] = {
-    { "caps", "tim", "", COL_FG, 0, 0 },
-    { "net",  "net", "", COL_FG, 0, 0 },
-    { "bt",   "bt",  "", COL_FG, 0, 0 },
-    { "vol",  "vol", "", COL_FG, 0, 0 },
-    { "bat",  "bat", "", COL_FG, 0, 0 },
-    { "pwr",  "pwr", "", COL_FG, 0, 0 },
+    { "vol", "vol", "",          COL_FG, 0, 0 },
+    { "tim", "tim", ICON_CLOCK,  COL_FG, 0, 0 },
+    { "pwr", "pwr", ICON_POWER,  COL_FG, 0, 0 },
 };
 #define NSEG (sizeof(segs) / sizeof(segs[0]))
 
@@ -113,16 +83,12 @@ static double palette[NCOL][3] = {
     { 0x10 / 255.0, 0x11 / 255.0, 0x13 / 255.0 }, /* bg: same as the popup */
     { 0xe6 / 255.0, 0xe6 / 255.0, 0xe6 / 255.0 }, /* fg */
     { 0x6b / 255.0, 0x6f / 255.0, 0x76 / 255.0 }, /* dim: off / muted */
-    { 0x35 / 255.0, 0x84 / 255.0, 0xe4 / 255.0 }, /* accent: active */
-    { 0xe5 / 255.0, 0x48 / 255.0, 0x4d / 255.0 }, /* warn: low battery */
-    { 0x3f / 255.0, 0xb9 / 255.0, 0x50 / 255.0 }, /* ok: charging */
 };
 
 static Display *dpy;
 static Window root, win, barwin;
 static int screen;
 static cairo_surface_t *surf;
-static int xkb_ok, xkb_event_base;
 static volatile sig_atomic_t running = 1;
 
 /* current panel geometry and state */
@@ -155,86 +121,6 @@ join_path(char *dst, size_t size, const char *dir, const char *name)
     return (n < 0 || (size_t)n >= size) ? -1 : 0;
 }
 
-/* Reads a whole (small) file. 0 on success. Handles EINTR and short reads. */
-static int
-read_file(const char *path, char *buf, size_t size)
-{
-    int fd;
-    ssize_t n;
-    size_t off = 0;
-
-    if (size == 0)
-        return -1;
-
-    if ((fd = open(path, O_RDONLY)) < 0)
-        return -1;
-
-    while (off < size - 1) {
-        n = read(fd, buf + off, size - 1 - off);
-        if (n < 0) {
-            if (errno == EINTR)
-                continue;
-            break;
-        }
-        if (n == 0)
-            break;
-        off += (size_t)n;
-    }
-    close(fd);
-
-    if (off == 0)
-        return -1;
-
-    buf[off] = '\0';
-    buf[strcspn(buf, "\r\n")] = '\0';
-    return 0;
-}
-
-static int
-read_attr(const char *dir, const char *name, char *buf, size_t size)
-{
-    char path[PATH_MAX];
-
-    if (join_path(path, sizeof(path), dir, name) < 0)
-        return -1;
-    return read_file(path, buf, size);
-}
-
-static int
-read_long_file(const char *path, long *out)
-{
-    char buf[64], *end;
-
-    if (read_file(path, buf, sizeof(buf)) < 0)
-        return -1;
-
-    errno = 0;
-    *out = strtol(buf, &end, 10);
-    if (end == buf || errno == ERANGE)
-        return -1;
-    return 0;
-}
-
-static int
-read_long_attr(const char *dir, const char *name, long *out)
-{
-    char path[PATH_MAX];
-
-    if (join_path(path, sizeof(path), dir, name) < 0)
-        return -1;
-    return read_long_file(path, out);
-}
-
-static int
-path_exists(const char *dir, const char *name)
-{
-    char path[PATH_MAX];
-
-    if (join_path(path, sizeof(path), dir, name) < 0)
-        return 0;
-    return access(path, F_OK) == 0;
-}
-
 static long long
 now_ms(void)
 {
@@ -256,255 +142,6 @@ time_left_ms(long long deadline)
     if (left > INT_MAX)
         return INT_MAX;
     return (int)left;
-}
-
-/* ---------------------------------------------------------------- battery */
-
-/* Finds the first real system battery. 0 on success. */
-static int
-find_battery(char *out, size_t size)
-{
-    DIR *d;
-    struct dirent *e;
-    char dir[PATH_MAX], val[32], fallback[PATH_MAX] = "";
-
-    if (!(d = opendir(PSDIR)))
-        return -1;
-
-    while ((e = readdir(d))) {
-        if (e->d_name[0] == '.')
-            continue;
-        if (join_path(dir, sizeof(dir), PSDIR, e->d_name) < 0)
-            continue;
-
-        if (read_attr(dir, "type", val, sizeof(val)) < 0 ||
-            strcmp(val, "Battery") != 0)
-            continue;
-
-        /* skip batteries of peripherals (mouse, headset, ...) */
-        if (read_attr(dir, "scope", val, sizeof(val)) == 0 &&
-            strcmp(val, "Device") == 0)
-            continue;
-
-        /* Prefer a battery that actually reports capacity. */
-        if (read_attr(dir, "capacity", val, sizeof(val)) == 0) {
-            snprintf(out, size, "%s", dir);
-            closedir(d);
-            return 0;
-        }
-        if (fallback[0] == '\0')
-            snprintf(fallback, sizeof(fallback), "%s", dir);
-    }
-    closedir(d);
-
-    if (fallback[0] != '\0') {
-        snprintf(out, size, "%s", fallback);
-        return 0;
-    }
-    return -1;
-}
-
-/* Battery percentage */
-static int
-battery_percent(const char *base)
-{
-    static const char *now[] = { "charge_now", "energy_now" };
-    static const char *full[] = { "charge_full", "energy_full" };
-    static const char *dsgn[] = { "charge_full_design", "energy_full_design" };
-    long cap, n, f;
-    long long pct;
-    int i;
-
-    if (read_long_attr(base, "capacity", &cap) == 0)
-        return cap < 0 ? 0 : cap > 100 ? 100 : (int)cap;
-
-    for (i = 0; i < 2; i++) {
-        if (read_long_attr(base, now[i], &n) < 0 || n < 0)
-            continue;
-        if ((read_long_attr(base, full[i], &f) < 0 || f <= 0) &&
-            (read_long_attr(base, dsgn[i], &f) < 0 || f <= 0))
-            continue;
-
-        /*
-         * 64-bit math: n * 100 can overflow a 32-bit long.  Values that
-         * large are not real batteries; fall back to floating point only
-         * when the exact integer expression would overflow.
-         */
-        if (n >= f)
-            pct = 100;
-        else if (n > (LLONG_MAX - f / 2) / 100)
-            pct = (long long)((long double)n * 100.0L / (long double)f +
-                              0.5L);
-        else
-            pct = ((long long)n * 100 + f / 2) / f;
-        return pct < 0 ? 0 : pct > 100 ? 100 : (int)pct;
-    }
-    return -1;
-}
-
-static void
-get_battery(const char *base, char *buf, size_t size, int *color)
-{
-    char status[32];
-    const char *icon;
-    int capacity, charging = 0;
-
-    buf[0] = '\0';
-    *color = COL_FG;
-    if (base == NULL || base[0] == '\0')
-        return;
-
-    if ((capacity = battery_percent(base)) < 0)
-        return; /* hide segment on failure */
-
-    if (read_attr(base, "status", status, sizeof(status)) == 0)
-        charging = (strcmp(status, "Charging") == 0);
-
-    if (capacity >= 88)
-        icon = ICON_BAT_FULL;
-    else if (capacity >= 63)
-        icon = ICON_BAT_3Q;
-    else if (capacity >= 38)
-        icon = ICON_BAT_HALF;
-    else if (capacity >= 13)
-        icon = ICON_BAT_1Q;
-    else
-        icon = ICON_BAT_EMPTY;
-
-    /* Icon only; the percentage is shown in dwmstatus-popup. */
-    snprintf(buf, size, "%s%s", charging ? ICON_BOLT " " : "", icon);
-    if (charging)
-        *color = COL_OK;
-    else if (capacity <= 15)
-        *color = COL_WARN;
-}
-
-/* ---------------------------------------------------------------- network */
-
-/*
- * Cheap, NetworkManager-independent link state from sysfs: wired wins over
- * Wi-Fi, a present but disconnected interface is shown dimmed, and a machine
- * without a physical interface hides the segment. Details (SSID, IP, scan,
- * connect) are in the popup, which talks to NetworkManager.
- */
-static void
-get_network(char *buf, size_t size, int *color)
-{
-    DIR *d;
-    struct dirent *e;
-    char dir[PATH_MAX], val[32];
-    int have_wired = 0, have_wifi = 0, wired_up = 0, wifi_up = 0;
-
-    buf[0] = '\0';
-    *color = COL_FG;
-
-    if (!(d = opendir(NETDIR)))
-        return;
-
-    while ((e = readdir(d))) {
-        int wifi, up;
-
-        if (e->d_name[0] == '.' || strcmp(e->d_name, "lo") == 0)
-            continue;
-        if (join_path(dir, sizeof(dir), NETDIR, e->d_name) < 0)
-            continue;
-        /* virtual devices (docker, veth, bridges, tunnels) have no device */
-        if (!path_exists(dir, "device"))
-            continue;
-
-        wifi = path_exists(dir, "wireless") || path_exists(dir, "phy80211");
-        up = read_attr(dir, "operstate", val, sizeof(val)) == 0 &&
-             strcmp(val, "up") == 0;
-
-        if (wifi) {
-            have_wifi = 1;
-            wifi_up |= up;
-        } else {
-            have_wired = 1;
-            wired_up |= up;
-        }
-    }
-    closedir(d);
-
-    if (wired_up) {
-        snprintf(buf, size, "%s", ICON_WIRED);
-    } else if (wifi_up) {
-        snprintf(buf, size, "%s", ICON_WIFI);
-    } else if (have_wifi) {
-        snprintf(buf, size, "%s", ICON_WIFI);
-        *color = COL_DIM;
-    } else if (have_wired) {
-        snprintf(buf, size, "%s", ICON_WIRED);
-        *color = COL_DIM;
-    }
-}
-
-/* -------------------------------------------------------------- bluetooth */
-
-/*
- * Adapter hci* present, rfkill state, and one hciN:HANDLE entry per active
- * connection - all from sysfs. Whether BlueZ itself has the adapter powered
- * is only known to the popup (bluetoothctl).
- */
-static int
-bt_blocked(void)
-{
-    DIR *d;
-    struct dirent *e;
-    char dir[PATH_MAX], val[32];
-    int blocked = 0;
-
-    if (!(d = opendir(RFKDIR)))
-        return 0;
-
-    while ((e = readdir(d))) {
-        if (strncmp(e->d_name, "rfkill", 6) != 0)
-            continue;
-        if (join_path(dir, sizeof(dir), RFKDIR, e->d_name) < 0)
-            continue;
-        if (read_attr(dir, "type", val, sizeof(val)) < 0 ||
-            strcmp(val, "bluetooth") != 0)
-            continue;
-        if ((read_attr(dir, "soft", val, sizeof(val)) == 0 &&
-             strcmp(val, "1") == 0) ||
-            (read_attr(dir, "hard", val, sizeof(val)) == 0 &&
-             strcmp(val, "1") == 0))
-            blocked = 1;
-    }
-    closedir(d);
-    return blocked;
-}
-
-static void
-get_bluetooth(char *buf, size_t size, int *color)
-{
-    DIR *d;
-    struct dirent *e;
-    int adapters = 0, conns = 0;
-
-    buf[0] = '\0';
-    *color = COL_FG;
-
-    if (!(d = opendir(BTDIR)))
-        return;
-    while ((e = readdir(d))) {
-        if (strncmp(e->d_name, "hci", 3) != 0)
-            continue;
-        if (strchr(e->d_name, ':'))
-            conns++;
-        else
-            adapters++;
-    }
-    closedir(d);
-
-    if (adapters == 0)
-        return; /* no adapter: hide segment */
-
-    snprintf(buf, size, "%s", ICON_BLUETOOTH);
-    if (bt_blocked())
-        *color = COL_DIM;
-    else if (conns > 0)
-        *color = COL_ACCENT;
 }
 
 /* ----------------------------------------------------------------- volume */
@@ -748,30 +385,11 @@ get_volume(char *buf, size_t size, int *color)
     snprintf(buf, size, "%s", icon);
 }
 
-/* -------------------------------------------------------------- caps lock */
-
-static void
-get_capslock(char *buf, size_t size, int *color)
-{
-    XkbStateRec state;
-
-    buf[0] = '\0';
-    *color = COL_ACCENT;
-    if (XkbGetState(dpy, XkbUseCoreKbd, &state) == Success &&
-        (state.locked_mods & LockMask))
-        snprintf(buf, size, "%s", ICON_CAPS_ON);
-}
-
 /* ------------------------------------------------------------------ state */
-
-/* Paths are cached and re-discovered periodically to survive hotplug. */
-static char bat_path[PATH_MAX];
 
 static void
 discover(void)
 {
-    if (find_battery(bat_path, sizeof(bat_path)) < 0)
-        bat_path[0] = '\0';
     if (find_program("wpctl", wpctl_path, sizeof(wpctl_path)) < 0)
         wpctl_path[0] = '\0';
 }
@@ -788,40 +406,13 @@ setseg(struct segment *s, const char *text, int color)
 }
 
 static int
-refresh_caps(void)
-{
-    char buf[32];
-    int color;
-
-    get_capslock(buf, sizeof(buf), &color);
-    return setseg(&segs[0], buf, color);
-}
-
-/* net, bt, bat, pwr: cheap sysfs reads */
-static int
-refresh_sysfs(void)
-{
-    char buf[32];
-    int color, changed = 0;
-
-    get_network(buf, sizeof(buf), &color);
-    changed |= setseg(&segs[1], buf, color);
-    get_bluetooth(buf, sizeof(buf), &color);
-    changed |= setseg(&segs[2], buf, color);
-    get_battery(bat_path, buf, sizeof(buf), &color);
-    changed |= setseg(&segs[4], buf, color);
-    changed |= setseg(&segs[5], ICON_POWER, COL_FG);
-    return changed;
-}
-
-static int
 refresh_volume(void)
 {
     char buf[32];
     int color;
 
     get_volume(buf, sizeof(buf), &color);
-    return setseg(&segs[3], buf, color);
+    return setseg(&segs[0], buf, color);
 }
 
 /* ------------------------------------------------------------------ fonts */
@@ -1229,11 +820,27 @@ update_panel(int rescan, int force)
 static void
 spawn_popup(const char *arg)
 {
-    const char *cmd = getenv("DWMSTATUS_POPUP");
+    const char *cmd;
     pid_t pid;
 
-    if (cmd == NULL || cmd[0] == '\0')
-        cmd = "dwmstatus-popup";
+    /*
+     * The clock and the calendar have their own light popups; everything
+     * else opens the combined system popup. All can be overridden from the
+     * environment.
+     */
+    if (strcmp(arg, "tim") == 0) {
+        cmd = getenv("DWMSTATUS_CLOCK");
+        if (cmd == NULL || cmd[0] == '\0')
+            cmd = "dwmstatus-clock";
+    } else if (strcmp(arg, "cal") == 0) {
+        cmd = getenv("DWMSTATUS_CALENDAR");
+        if (cmd == NULL || cmd[0] == '\0')
+            cmd = "dwmstatus-calendar";
+    } else {
+        cmd = getenv("DWMSTATUS_POPUP");
+        if (cmd == NULL || cmd[0] == '\0')
+            cmd = "dwmstatus-popup";
+    }
 
     if ((pid = fork()) < 0)
         return;
@@ -1255,7 +862,10 @@ spawn_popup(const char *arg)
             if (devnull > STDERR_FILENO)
                 close(devnull);
         }
-        execlp(cmd, cmd, arg, (char *)NULL);
+        if (strcmp(arg, "tim") == 0 || strcmp(arg, "cal") == 0)
+            execlp(cmd, cmd, (char *)NULL);
+        else
+            execlp(cmd, cmd, arg, (char *)NULL);
         _exit(127);
     }
     while (waitpid(pid, NULL, 0) < 0 && errno == EINTR)
@@ -1267,14 +877,18 @@ buttonpress(XButtonEvent *ev)
 {
     size_t i;
 
-    if (ev->button != Button1)
-        return;
     for (i = 0; i < NSEG; i++) {
-        if (segs[i].w > 0 && ev->x >= segs[i].x &&
-            ev->x < segs[i].x + segs[i].w) {
+        if (segs[i].w == 0 || ev->x < segs[i].x ||
+            ev->x >= segs[i].x + segs[i].w)
+            continue;
+        /* Left click opens the segment's popup; right click on the clock
+         * opens the calendar popup instead. */
+        if (ev->button == Button1)
             spawn_popup(segs[i].arg);
-            return;
-        }
+        else if (ev->button == Button3 &&
+                 strcmp(segs[i].arg, "tim") == 0)
+            spawn_popup("cal");
+        return;
     }
 }
 
@@ -1362,9 +976,6 @@ main(int argc, char *argv[])
     parse_color("DWMSTATUS_BG", COL_BG);
     parse_color("DWMSTATUS_FG", COL_FG);
     parse_color("DWMSTATUS_DIM", COL_DIM);
-    parse_color("DWMSTATUS_ACCENT", COL_ACCENT);
-    parse_color("DWMSTATUS_WARN", COL_WARN);
-    parse_color("DWMSTATUS_OK", COL_OK);
 
     /*
      * Older versions put the status in dwm's bar through the root window
@@ -1374,21 +985,7 @@ main(int argc, char *argv[])
     XDeleteProperty(dpy, root, XInternAtom(dpy, "_DWMSTATUS_SEGMENTS", False));
     XStoreName(dpy, root, " ");
 
-    /* Caps Lock is delivered as an event instead of being polled. */
-    {
-        int opcode, error, major = XkbMajorVersion, minor = XkbMinorVersion;
-
-        if (XkbQueryExtension(dpy, &opcode, &xkb_event_base, &error, &major,
-                              &minor)) {
-            XkbSelectEventDetails(dpy, XkbUseCoreKbd, XkbStateNotify,
-                                  XkbModifierLockMask, XkbModifierLockMask);
-            xkb_ok = 1;
-        }
-    }
-
     discover();
-    refresh_caps();
-    refresh_sysfs();
     refresh_volume();
     update_panel(1, 1);
 
@@ -1413,9 +1010,6 @@ main(int argc, char *argv[])
                 redraw = 1;
             else if (ev.type == ButtonPress && ev.xbutton.window == win)
                 buttonpress(&ev.xbutton);
-            else if (xkb_ok && ev.type == xkb_event_base &&
-                     ((XkbEvent *)&ev)->any.xkb_type == XkbStateNotify)
-                changed |= refresh_caps();
         }
 
         now = now_ms();
@@ -1430,9 +1024,6 @@ main(int argc, char *argv[])
             next_volume = now + VOLUME_INTERVAL_MS;
         }
         if (now >= next_tick) {
-            if (!xkb_ok)
-                changed |= refresh_caps();
-            changed |= refresh_sysfs();
             tick++;
             /* geometry of dwm's bar, with an occasional full search */
             update_panel(tick % BAR_RESCAN_TICKS == 0, changed || redraw);

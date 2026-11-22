@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""dwmstatus-popup - combined power, network, Bluetooth, brightness, volume,
-battery, clock and calendar popup.
+"""dwmstatus-popup - combined power, network, Bluetooth, brightness, volume
+and battery popup.
 
-A left click on a segment of the dwmstatus panel opens this window.  Passing
-"pwr", "net", "bt", "bri", "vol", "bat" or "tim" focuses the matching section,
-so clicking an indicator opens the popup at that control.
+A left click on the volume or power segment of the dwmstatus panel opens this
+window.  Passing "pwr", "net", "bt", "bri", "vol" or "bat" focuses the matching
+section, so clicking an indicator opens the popup at that control.  The clock
+segment uses the separate dwmstatus-clock popup instead.
 
 Sections that have no working backend are hidden (no NetworkManager, no
-Bluetooth controller, ...).  The calendar always works.
+Bluetooth controller, ...).
 
 When the panel starts the popup it sets DWMSTATUS_PANEL="x,y,w,h"; the popup
 then opens right below the panel (above it for a bottom bar), aligned to its
@@ -15,22 +16,13 @@ right edge.  Without it the popup appears 40 px from the top and 15 px from
 the right edge of the monitor.
 """
 
-import datetime
 import fcntl
 import os
 import signal
 import sys
 import threading
-import time
 
 sys.dont_write_bytecode = True  # keep __pycache__ out of the repo
-
-# The bar only shows icons now, so the clock digits live here.  Keep the old
-# DWMSTATUS_TZ behaviour (default Asia/Jakarta) for those digits.
-_os_tz = os.environ.get("DWMSTATUS_TZ") or "Asia/Jakarta"
-if _os_tz:
-    os.environ["TZ"] = _os_tz
-    time.tzset()
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 for _path in (HERE, os.path.join(HERE, os.pardir, "lib", "dwmstatus")):
@@ -54,8 +46,6 @@ ICON_BAT_HALF = "\uf242"    # nf-fa-battery_half
 ICON_BAT_1Q = "\uf243"      # nf-fa-battery_quarter
 ICON_BAT_EMPTY = "\uf244"   # nf-fa-battery_empty
 ICON_BOLT = "\uf0e7"        # nf-fa-bolt
-ICON_CALENDAR = "\uf073"    # nf-fa-calendar
-ICON_CLOCK = "\uf017"       # nf-fa-clock_o
 ICON_WIFI = "\uf1eb"        # nf-fa-wifi
 ICON_BLUETOOTH = "\uf293"   # nf-fa-bluetooth
 ICON_LOCKED = "\uf023"      # nf-fa-lock (secured Wi-Fi network)
@@ -87,10 +77,6 @@ CSS = """
 .dwmstatus-title {
     font-weight: bold;
 }
-.dwmstatus-clock {
-    font-size: 22px;
-    font-weight: bold;
-}
 .dwmstatus-level trough {
     min-height: 6px;
     border-radius: 3px;
@@ -112,20 +98,6 @@ CSS = """
 .dwmstatus-error {
     color: #e5484d;
     font-size: 11px;
-}
-.dwmstatus-nav {
-    min-width: 32px;
-    padding: 2px 8px;
-}
-.dwmstatus-month {
-    background-color: #2b2b2b;
-    border: 1px solid alpha(currentColor, 0.35);
-    border-radius: 4px;
-    padding: 3px 12px;
-    min-width: 150px;
-}
-calendar:selected {
-    background-color: #121314;
 }
 """
 
@@ -276,23 +248,6 @@ def popup(initial):
                 else geometry.x + geometry.width - 15
             place["avail"] = geometry.y + geometry.height - place["edge"] - 10
     place["avail"] = max(240, place["avail"])
-
-    # --- clock (live) -----------------------------------------------------
-    clock_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-    clock_box.set_border_width(6)
-    clock_label = Gtk.Label(xalign=1)
-    clock_label.get_style_context().add_class("dwmstatus-clock")
-    clock_box.pack_start(icon(ICON_CLOCK), False, False, 0)
-    clock_box.pack_start(clock_label, True, True, 0)
-    content.pack_start(clock_box, False, False, 0)
-
-    def tick_clock():
-        clock_label.set_text(f"{datetime.datetime.now():%H:%M}")
-        return True
-
-    tick_clock()
-    GLib.timeout_add_seconds(1, tick_clock)
-    content.pack_start(Gtk.Separator(), False, False, 0)
 
     def message_label():
         """A small red line for errors; hidden until there is something."""
@@ -792,66 +747,6 @@ def popup(initial):
         content.pack_start(bat_box, False, False, 0)
         sections["bat"] = (bat_box, level)
 
-    # --- calendar ---------------------------------------------------------
-    today = datetime.date.today()
-
-    def date_text(day):
-        return f"{day:%a, %d %b %Y}"
-
-    cal_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-    cal_box.set_border_width(6)
-    cal_value = Gtk.Label(label=date_text(today), xalign=1)
-    calendar = Gtk.Calendar()
-    calendar.set_display_options(Gtk.CalendarDisplayOptions.SHOW_DAY_NAMES)
-    calendar.select_month(today.month - 1, today.year)
-
-    # Own month header instead of GtkCalendar's built-in one, so the < and >
-    # buttons can have breathing room around them.
-    nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-    nav.set_border_width(2)
-    month_label = Gtk.Label(xalign=0.5)
-    month_label.get_style_context().add_class("dwmstatus-title")
-    month_label.get_style_context().add_class("dwmstatus-month")
-    prev_month = Gtk.Button(label="<")
-    next_month = Gtk.Button(label=">")
-    for button in (prev_month, next_month):
-        button.get_style_context().add_class("dwmstatus-nav")
-    nav.pack_start(prev_month, False, False, 0)
-    nav.pack_start(month_label, True, True, 0)
-    nav.pack_end(next_month, False, False, 0)
-
-    def update_month_label():
-        year, month, _ = calendar.get_date()
-        month_label.set_text(
-            datetime.date(year, month + 1, 1).strftime("%B %Y"))
-
-    def shift_month(delta):
-        year, month, _ = calendar.get_date()
-        month += delta
-        year += month // 12
-        month %= 12
-        calendar.select_month(month, year)
-        update_month_label()
-
-    def on_day_selected(widget):
-        year, month, day = widget.get_date()
-        cal_value.set_text(date_text(datetime.date(year, month + 1, day)))
-
-    prev_month.connect("clicked", lambda _button: shift_month(-1))
-    next_month.connect("clicked", lambda _button: shift_month(1))
-    calendar.connect("month-changed", lambda _calendar: update_month_label())
-    calendar.connect("day-selected", on_day_selected)
-    update_month_label()
-
-    cal_box.pack_start(heading(ICON_CALENDAR, "Calendar", cal_value),
-                       False, False, 0)
-    cal_box.pack_start(nav, False, False, 0)
-    cal_box.pack_start(calendar, False, False, 0)
-    if sections:
-        content.pack_start(Gtk.Separator(), False, False, 0)
-    content.pack_start(cal_box, False, False, 0)
-    sections["tim"] = (cal_box, calendar)
-
     # The popup got taller with the new sections.  Scroll instead of running
     # off a small screen: it never gets taller than the room next to the panel.
     scrolled = Gtk.ScrolledWindow()
@@ -920,7 +815,7 @@ def popup(initial):
 
 
 def usage(stream=sys.stderr):
-    print("usage: dwmstatus-popup [pwr|net|bt|bri|vol|bat|tim]", file=stream)
+    print("usage: dwmstatus-popup [pwr|net|bt|bri|vol|bat]", file=stream)
     return 2
 
 
@@ -932,7 +827,7 @@ def main():
         usage(sys.stdout)
         return 0
     if len(argv) == 1 and argv[0] in ("pwr", "net", "bt", "bri", "vol",
-                                      "bat", "tim"):
+                                      "bat"):
         return popup(argv[0])
     return usage()
 

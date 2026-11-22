@@ -20,15 +20,14 @@ machine is hidden.
 
 | Segment | Meaning | Source |
 | ------- | ------- | ------ |
-| caps | Caps Lock (only while active) | X keyboard events, no polling |
-| net | wired / Wi-Fi link, dimmed when disconnected | `/sys/class/net` |
-| bt | Bluetooth adapter; dimmed when blocked, highlighted while a device is connected | `/sys/class/bluetooth`, rfkill |
 | vol | volume, dimmed when muted | `wpctl` |
-| bat | battery; green while charging, red when low | `/sys/class/power_supply` |
-| pwr | power button | always shown |
+| tim | clock; opens the clock popup | always shown |
+| pwr | power button; opens the power menu | always shown |
 
-Percentages, the clock and everything interactive are in the popup, described
-under [Click actions](#click-actions).
+The clock is an icon-only segment: its popup shows the time, and a right click
+opens the separate calendar popup. The volume and power popups hold the
+percentages, sliders and controls described under
+[Click actions](#click-actions).
 
 The panel finds dwm's bar (window class `dwm`), copies its height, sits at its
 right end, follows it to the bottom if `topbar = 0`, and hides while dwm's bar
@@ -67,24 +66,31 @@ root window name so dwm does not show its `dwm-x.y` banner next to the panel.
 | -------- | ------- | - |
 | `DWMSTATUS_FONT` | `JetBrainsMono Nerd Font` | font family (Nerd Font) |
 | `DWMSTATUS_BG` | `#101113` | background; match your dwm bar |
-| `DWMSTATUS_FG`, `_DIM`, `_ACCENT`, `_WARN`, `_OK` | see source | `#rrggbb` colours |
+| `DWMSTATUS_FG`, `_DIM` | see source | `#rrggbb` colours |
 | `DWMSTATUS_HEIGHT` | `24` | panel height when no dwm bar is found |
-| `DWMSTATUS_POPUP` | `dwmstatus-popup` | command run on click |
-| `DWMSTATUS_TZ` | `Asia/Jakarta` | time zone of the popup clock |
+| `DWMSTATUS_POPUP` | `dwmstatus-popup` | system popup (volume, power, ...) |
+| `DWMSTATUS_CLOCK` | `dwmstatus-clock` | clock popup |
+| `DWMSTATUS_CALENDAR` | `dwmstatus-calendar` | calendar popup |
+| `DWMSTATUS_TZ` | `Asia/Jakarta` | time zone of the clock and calendar |
 | `DWMSTATUS_LOCK`, `_LOGOUT`, `_SUSPEND`, `_REBOOT`, `_POWEROFF` | auto | power menu commands |
 
 ## Click actions
 
-A left click on a segment opens one combined GTK 3 popup, `dwmstatus-popup`,
-focused on that section: `caps` opens the clock/calendar, `net`, `bt`, `vol`,
-`bat` and `pwr` open their own section. The popup opens right below the panel
-(above it for a bottom bar), aligned to the panel's right edge. Its window title
-is `status`. Clicking a segment again closes it, as do `Esc`, `Return` and
+A left click on the volume or power segment opens the system GTK 3 popup,
+`dwmstatus-popup`, focused on that section. A left click on the clock opens a
+small clock popup, `dwmstatus-clock`; a **right click** on the clock opens the
+calendar popup, `dwmstatus-calendar`. The clock and calendar no longer share the
+combined popup. All popups open right below the panel (above it for a bottom
+bar), aligned to the panel's right edge, with the window title `status`.
+Clicking the same segment again closes its popup, as do `Esc`, `Return` and
 clicking elsewhere.
 
-Sections, top to bottom (those without a working backend are hidden):
+The clock popup shows the live time and date. The calendar popup shows the
+current month with its own `<` / `>` month navigation.
 
-- **Clock**, live `HH:MM`.
+Sections of the system popup, top to bottom (those without a working backend
+are hidden):
+
 - **Power**: Lock, Log out, Suspend, Reboot, Power off. Log out, Reboot and
   Power off ask for confirmation first (the focus starts on *Cancel*).
   Also shows the uptime.
@@ -93,9 +99,9 @@ Sections, top to bottom (those without a working backend are hidden):
   disconnect. A new secured network asks for its password.
 - **Bluetooth** (BlueZ): power switch and the paired devices; click one to
   connect or disconnect it.
-- **Brightness**, **Volume** (with mute), **Battery** and a **Calendar**.
+- **Brightness**, **Volume** (with mute) and **Battery**.
 
-The popup needs Python 3, PyGObject and GTK 3 (Arch packages `python`,
+The popups need Python 3, PyGObject and GTK 3 (Arch packages `python`,
 `python-gobject`, `gtk3`). Backends:
 
 | Section | Tool |
@@ -111,18 +117,17 @@ Notes:
 - **Wi-Fi passwords** are passed to `nmcli` on its command line (the only
   non-interactive way it offers), so they are visible in `ps` for the second or
   two the connection takes. Networks you already know need no password.
-- **The panel's Bluetooth icon** is driven by sysfs: adapter present, rfkill
-  state, and active connections. Whether BlueZ has the adapter *powered* is only
-  shown in the popup.
 - To use different power commands, set e.g.
   `DWMSTATUS_LOCK="slock"` or `DWMSTATUS_LOGOUT="pkill -x dwm"`. The value is
   split like a shell would but is **not** run through a shell.
 
 `dwmstatus-volume` and `dwmstatus-brightness` remain as single-control sliders
-(thin wrappers around `dwmstatus-slider`), and `dwmstatus-calendar` still shows
-the month as a notification. Their command line modes work without GTK:
+(thin wrappers around `dwmstatus-slider`). `dwmstatus-calendar` is the calendar
+popup; without GTK it falls back to a desktop notification (`--notify` forces
+that mode). Their command line modes work without GTK:
 `dwmstatus-volume --get|--set PERCENT|--mute|--unmute|--toggle-mute` and
-`dwmstatus-brightness --get|--set PERCENT`.
+`dwmstatus-brightness --get|--set PERCENT`; `dwmstatus-clock` only has
+`--help`.
 
 ```bash
 make install   # installs the panel and all helpers
