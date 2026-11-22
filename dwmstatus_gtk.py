@@ -207,6 +207,10 @@ def present(win, content, geometry, place, Gtk, Gdk, GLib):
     win.connect("focus-out-event", on_focus_out)
     win.connect("destroy", Gtk.main_quit)
 
+    # Start the grace period before mapping: show/present can emit a focus-out
+    # immediately, and a zero timestamp would make that look like a late
+    # dismissal and destroy the popup while it is still opening.
+    shown_at[0] = GLib.get_monotonic_time()
     win.show_all()
     win.present()
 
@@ -235,5 +239,3 @@ def present(win, content, geometry, place, Gtk, Gdk, GLib):
     # to the panel when the content changes size.
     win.connect("size-allocate", lambda *_a: GLib.idle_add(reposition))
     reposition()
-
-    shown_at[0] = GLib.get_monotonic_time()
