@@ -8,6 +8,7 @@ clicks.
 
 Segments, left to right (a segment that is not available is hidden):
     caps  Caps Lock (only while active)        } right end of the bar
+    net   network icon (Wi-Fi / Ethernet)      } right end of the bar
     vol   volume (wpctl)                       } right end of the bar
     tim   clock icon and time (opens popup)    } centre of the bar
     pwr   power button (opens the power menu)  } right end of the bar
@@ -26,6 +27,7 @@ DWMSTATUS_DIM (#rrggbb).
 Build: see Makefile (needs cairo and X11).
 */
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -58,6 +60,10 @@ Build: see Makefile (needs cairo and X11).
 
 #define FALLBACK_HEIGHT 24           /* when dwm's bar cannot be found */
 
+#ifndef NETDIR
+#define NETDIR "/sys/class/net"
+#endif
+
 /* Nerd Font icons as UTF-8 byte sequences */
 #define ICON_VOL_OFF      "\xef\x80\xa6"  /* U+F026 nf-fa-volume_off */
 #define ICON_VOL_LOW      "\xef\x80\xa7"  /* U+F027 nf-fa-volume_down */
@@ -65,6 +71,8 @@ Build: see Makefile (needs cairo and X11).
 #define ICON_CLOCK        "\xef\x80\x97"  /* U+F017 nf-fa-clock_o */
 #define ICON_POWER        "\xef\x80\x91"  /* U+F011 nf-fa-power_off */
 #define ICON_CAPS_ON      "\xe2\x87\xaa"  /* U+21EA ⇪ CAPS LOCK */
+#define ICON_WIFI         "\xef\x87\xab"  /* U+F1EB nf-fa-wifi */
+#define ICON_WIRED        "\xef\x82\xac"  /* U+F0AC nf-fa-globe */
 
 /* Gap between the centred bar clock's icon and its HH:MM text. */
 #define CLOCK_ICON_GAP    "  "
@@ -94,6 +102,7 @@ struct segment {
 static struct segment segs[] = {
     { "tim", "tim", "",            COL_FG,     PANEL_CLOCK, 0, 0 },
     { "caps", "", "",              COL_ACCENT, PANEL_RIGHT, 0, 0 },
+    { "net", "net", "",            COL_FG,     PANEL_RIGHT, 0, 0 },
     { "vol", "vol", "",            COL_FG,     PANEL_RIGHT, 0, 0 },
     { "pwr", "pwr", ICON_POWER,    COL_FG,     PANEL_RIGHT, 0, 0 },
 };
@@ -139,6 +148,36 @@ join_path(char *dst, size_t size, const char *dir, const char *name)
 {
     int n = snprintf(dst, size, "%s/%s", dir, name);
     return (n < 0 || (size_t)n >= size) ? -1 : 0;
+}
+
+static int
+path_exists(const char *dir, const char *name)
+{
+    char path[PATH_MAX];
+
+    return join_path(path, sizeof(path), dir, name) == 0 &&
+           access(path, F_OK) == 0;
+}
+
+/* Reads a small sysfs attribute, stripping the trailing newline. */
+static int
+read_attr(const char *dir, const char *name, char *buf, size_t size)
+{
+    char path[PATH_MAX];
+    int fd;
+    ssize_t n;
+
+    if (size == 0 || join_path(path, sizeof(path), dir, name) < 0)
+        return -1;
+    if ((fd = open(path, O_RDONLY | O_CLOEXEC)) < 0)
+        return -1;
+    n = read(fd, buf, size - 1);
+    close(fd);
+    if (n < 0)
+        return -1;
+    buf[n] = '\0';
+    buf[strcspn(buf, "\r\n")] = '\0';
+    return 0;
 }
 
 static long long
@@ -484,6 +523,57 @@ refresh_caps(void)
         (state.locked_mods & LockMask))
         text = ICON_CAPS_ON;
     return setseg(s, text, COL_ACCENT);
+}
+
+/* ------------------------------------------------------------------ network */
+
+/* Wi-Fi or Ethernet, dimmed while the link is down; hidden if none exists. */
+static int
+refresh_network(void)
+{
+    DIR *d;
+    struct dirent *e;
+    struct segment *s = find_segment("net");
+    char dir[PATH_MAX], val[32];
+    int have_wired = 0, have_wifi = 0, wired_up = 0, wifi_up = 0;
+
+    if (s == NULL)
+        return 0;
+    if ((d = opendir(NETDIR)) == NULL)
+        return setseg(s, "", COL_FG);
+
+    while ((e = readdir(d)) != NULL) {
+        int wifi, up;
+
+        if (e->d_name[0] == '.' || strcmp(e->d_name, "lo") == 0)
+            continue;
+        if (join_path(dir, sizeof(dir), NETDIR, e->d_name) < 0)
+            continue;
+        /* Virtual devices (docker, veth, bridges) have no "device" link. */
+        if (!path_exists(dir, "device"))
+            continue;
+        wifi = path_exists(dir, "wireless") || path_exists(dir, "phy80211");
+        up = read_attr(dir, "operstate", val, sizeof(val)) == 0 &&
+             strcmp(val, "up") == 0;
+        if (wifi) {
+            have_wifi = 1;
+            wifi_up |= up;
+        } else {
+            have_wired = 1;
+            wired_up |= up;
+        }
+    }
+    closedir(d);
+
+    if (wired_up)
+        return setseg(s, ICON_WIRED, COL_FG);
+    if (wifi_up)
+        return setseg(s, ICON_WIFI, COL_FG);
+    if (have_wifi)
+        return setseg(s, ICON_WIFI, COL_DIM);
+    if (have_wired)
+        return setseg(s, ICON_WIRED, COL_DIM);
+    return setseg(s, "", COL_FG);
 }
 
 /* ------------------------------------------------------------------ fonts */
@@ -1115,6 +1205,7 @@ main(int argc, char *argv[])
 
     discover();
     refresh_caps();
+    refresh_network();
     refresh_volume();
     refresh_clock();
     update_panel(1, 1);
@@ -1167,6 +1258,7 @@ main(int argc, char *argv[])
             tick++;
             if (!xkb_ok)
                 changed |= refresh_caps();
+            changed |= refresh_network();
             changed |= refresh_clock();
             /* geometry of dwm's bar, with an occasional full search */
             update_panel(tick % BAR_RESCAN_TICKS == 0, changed || redraw);
