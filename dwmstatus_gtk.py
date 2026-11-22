@@ -207,6 +207,29 @@ def present(win, content, geometry, place, Gtk, Gdk, GLib):
     win.connect("focus-out-event", on_focus_out)
     win.connect("destroy", Gtk.main_quit)
 
+    def position_for(width, height):
+        """Final x/y for a popup size, or None when it has no anchor."""
+        if geometry is None:
+            return None
+        if place["center"] is not None:
+            x = place["center"] - width // 2
+        elif place["right"] is not None:
+            x = place["right"] - width
+        else:
+            return None
+        x = max(geometry.x, min(x, geometry.x + geometry.width - width))
+        y = place["edge"] if place["below"] else place["edge"] - height
+        return x, max(geometry.y, y)
+
+    # GTK cannot measure its natural size before it is mapped, but even an
+    # approximate pre-map position keeps the window from flashing at (0, 0)
+    # while it opens.  reposition() refines it once the real size is known.
+    win.set_position(Gtk.WindowPosition.NONE)
+    natural = win.get_preferred_size().natural_size
+    initial = position_for(natural.width, natural.height)
+    if initial is not None:
+        win.move(*initial)
+
     # Start the grace period before mapping: show/present can emit a focus-out
     # immediately, and a zero timestamp would make that look like a late
     # dismissal and destroy the popup while it is still opening.
@@ -217,22 +240,12 @@ def present(win, content, geometry, place, Gtk, Gdk, GLib):
     last_position = [None]
 
     def reposition(*_args):
-        """Right edge on the panel's right edge, or centred under it."""
-        if geometry is None:
+        """Keep the popup glued to its segment when the content resizes."""
+        target = position_for(*win.get_size())
+        if target is None or last_position[0] == target:
             return False
-        width, height = win.get_size()
-        if place["center"] is not None:
-            x = place["center"] - width // 2
-        elif place["right"] is not None:
-            x = place["right"] - width
-        else:
-            return False
-        x = max(geometry.x, min(x, geometry.x + geometry.width - width))
-        y = place["edge"] if place["below"] else place["edge"] - height
-        y = max(geometry.y, y)
-        if last_position[0] != (x, y):
-            last_position[0] = (x, y)
-            win.move(x, y)
+        last_position[0] = target
+        win.move(*target)
         return False
 
     # dwm may also place the window itself when it manages it; keep it glued
