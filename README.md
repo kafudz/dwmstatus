@@ -22,6 +22,7 @@ machine is hidden.
 | Segment | Meaning | Source |
 | ------- | ------- | ------ |
 | caps | Caps Lock indicator, shown only while active (⇪) | XKB |
+| net | Wi-Fi / Ethernet icon, dimmed when the link is down | sysfs |
 | vol | volume, dimmed when muted | `wpctl` |
 | tim | clock icon and live time; opens the clock and calendar popup | always shown |
 | pwr | power button; opens the power menu | always shown |
@@ -32,7 +33,7 @@ power popups hold the percentages, sliders and controls described under
 [Click actions](#click-actions).
 
 The panel finds dwm's bar (window class `dwm`), copies its height, centres the
-clock on it and keeps volume/power at its right end. It follows the bar to the
+clock on it and keeps network/volume/power at its right end. It follows the bar to the
 bottom if `topbar = 0` and hides while dwm's bar is hidden. Without dwm the
 clock is centred at the top and the buttons stay at the top-right.
 Uses a Nerd Font, so make sure one is installed.
