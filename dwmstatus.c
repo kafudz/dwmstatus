@@ -1,21 +1,22 @@
 /*
 dwmstatus - standalone status panel for dwm (based on 20h's dwmstatus)
 
-A small, polybar-style panel: its own X window, drawn with Cairo, that sits
-over the right end of dwm's bar. It does NOT write dwm's status text and needs
-no dwm patch; it handles its own clicks.
+A small, polybar-style panel: two small Cairo-drawn X windows over dwm's bar.
+The clock is centred on the bar; volume and power stay at its right end. It
+does NOT write dwm's status text and needs no dwm patch; it handles its own
+clicks.
 
 Segments, left to right (a segment that is not available is hidden):
-    vol   volume (wpctl)
-    tim   clock icon and time (opens the clock and calendar popup)
-    pwr   power button (opens the power menu)
+    vol   volume (wpctl)                       } right end of the bar
+    tim   clock icon and time (opens popup)    } centre of the bar
+    pwr   power button (opens the power menu)  } right end of the bar
 
-A left click on a segment runs a popup next to the panel. Volume and power run
+A left click on a segment runs a popup next to it. Volume and power run
 `dwmstatus-popup <name>`, the GTK popup with power, network, Bluetooth,
 brightness, volume and battery. The clock runs `dwmstatus-clock`, the combined
-clock and calendar popup. The panel finds dwm's bar window (WM_CLASS dwm/dwm)
-and follows its position and height, so it also works with a bottom bar and
-hides while dwm's bar is hidden (showbar off).
+clock and calendar popup, centred under the clock. The panel finds dwm's bar
+window (WM_CLASS dwm/dwm) and follows its position and height, so it also works
+with a bottom bar and hides while dwm's bar is hidden (showbar off).
 
 Requires a Nerd Font, e.g. "JetBrainsMono Nerd Font" (override with
 DWMSTATUS_FONT). Colours can be overridden with DWMSTATUS_BG, DWMSTATUS_FG and
@@ -64,18 +65,30 @@ Build: see Makefile (needs cairo and X11).
 
 enum { COL_BG, COL_FG, COL_DIM, NCOL };
 
+/* Two windows: the clock sits alone in the middle of the bar, the volume and
+ * power buttons stay together at its right end. */
+enum { PANEL_CLOCK, PANEL_RIGHT, NPANELS };
+
+struct panel {
+    Window win;
+    cairo_surface_t *surf;
+    int x, y, w, h;
+    int mapped;
+};
+
 struct segment {
     const char *name;   /* segment name (documentation / debugging) */
     const char *arg;    /* argument passed to the popup */
     char text[32];      /* UTF-8 icon(s); empty = hidden */
     int color;
+    int panel;          /* panel window this segment lives in */
     int x, w;           /* position inside the panel (valid after layout) */
 };
 
 static struct segment segs[] = {
-    { "vol", "vol", "",          COL_FG, 0, 0 },
-    { "tim", "tim", "",          COL_FG, 0, 0 },
-    { "pwr", "pwr", ICON_POWER,  COL_FG, 0, 0 },
+    { "tim", "tim", "",          COL_FG, PANEL_CLOCK, 0, 0 },
+    { "vol", "vol", "",          COL_FG, PANEL_RIGHT, 0, 0 },
+    { "pwr", "pwr", ICON_POWER,  COL_FG, PANEL_RIGHT, 0, 0 },
 };
 #define NSEG (sizeof(segs) / sizeof(segs[0]))
 
@@ -86,13 +99,11 @@ static double palette[NCOL][3] = {
 };
 
 static Display *dpy;
-static Window root, win, barwin;
+static Window root, barwin;
 static int screen;
-static cairo_surface_t *surf;
+static struct panel panels[NPANELS];
 static volatile sig_atomic_t running = 1;
 
-/* current panel geometry and state */
-static int px, py, pw, ph, panel_mapped;
 static int font_h; /* bar height the fonts were built for */
 
 static void
@@ -609,9 +620,9 @@ draw_text(cairo_t *cr, double x, double y, const char *text)
 
 /* ----------------------------------------------------------------- layout */
 
-/* Computes each visible segment's x/w; returns the total panel width. */
+/* Computes the x/w of each visible segment in one panel; returns its width. */
 static int
-layout(int height)
+layout(int height, int panel)
 {
     int pad = height * 2 / 5, x = 0;
     size_t i;
@@ -621,6 +632,8 @@ layout(int height)
     for (i = 0; i < NSEG; i++) {
         struct segment *s = &segs[i];
 
+        if (s->panel != panel)
+            continue;
         s->x = s->w = 0;
         if (s->text[0] == '\0')
             continue;
@@ -639,35 +652,35 @@ set_source(cairo_t *cr, int col)
 }
 
 static void
-draw(void)
+draw(struct panel *p)
 {
     cairo_t *cr;
     double baseline;
     int pad;
     size_t i;
 
-    if (!surf || !panel_mapped)
+    if (!p->surf || !p->mapped)
         return;
 
-    cr = cairo_create(surf);
+    cr = cairo_create(p->surf);
     set_source(cr, COL_BG);
     cairo_paint(cr);
 
-    pad = ph * 2 / 5;
+    pad = p->h * 2 / 5;
     if (pad < 5)
         pad = 5;
-    baseline = (ph - (font_ascent + font_descent)) / 2.0 + font_ascent;
+    baseline = (p->h - (font_ascent + font_descent)) / 2.0 + font_ascent;
 
     for (i = 0; i < NSEG; i++) {
         struct segment *s = &segs[i];
 
-        if (s->text[0] == '\0')
+        if (s->panel != p - panels || s->text[0] == '\0')
             continue;
         set_source(cr, s->color);
         draw_text(cr, s->x + pad, baseline, s->text);
     }
     cairo_destroy(cr);
-    cairo_surface_flush(surf);
+    cairo_surface_flush(p->surf);
     XFlush(dpy);
 }
 
@@ -687,9 +700,12 @@ find_bar(void)
     for (i = 0; i < n; i++) {
         XClassHint ch;
         XWindowAttributes wa;
-        int isbar;
+        int isbar, j, ispanel = 0;
 
-        if (kids[i] == win)
+        for (j = 0; j < NPANELS; j++)
+            if (kids[i] == panels[j].win)
+                ispanel = 1;
+        if (ispanel)
             continue;
         ch.res_name = ch.res_class = NULL;
         if (!XGetClassHint(dpy, kids[i], &ch))
@@ -738,7 +754,7 @@ bar_geometry(int rescan, int *x, int *y, int *w, int *h)
 }
 
 static void
-create_panel(int x, int y, int w, int h)
+create_panel(struct panel *p, int x, int y, int w, int h)
 {
     XSetWindowAttributes wa;
     XClassHint ch = { "dwmstatus", "dwmstatus" };
@@ -754,36 +770,73 @@ create_panel(int x, int y, int w, int h)
     wa.override_redirect = True; /* dwm must not manage or tile the panel */
     wa.background_pixel = c.pixel;
     wa.event_mask = ExposureMask | ButtonPressMask;
-    win = XCreateWindow(dpy, root, x, y, (unsigned)w, (unsigned)h, 0,
-                        DefaultDepth(dpy, screen), CopyFromParent,
-                        DefaultVisual(dpy, screen),
-                        CWOverrideRedirect | CWBackPixel | CWEventMask, &wa);
-    XSetClassHint(dpy, win, &ch);
-    XStoreName(dpy, win, "dwmstatus");
+    p->win = XCreateWindow(dpy, root, x, y, (unsigned)w, (unsigned)h, 0,
+                           DefaultDepth(dpy, screen), CopyFromParent,
+                           DefaultVisual(dpy, screen),
+                           CWOverrideRedirect | CWBackPixel | CWEventMask,
+                           &wa);
+    XSetClassHint(dpy, p->win, &ch);
+    XStoreName(dpy, p->win, "dwmstatus");
 
     type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
     dock = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
-    XChangeProperty(dpy, win, type, XA_ATOM, 32, PropModeReplace,
+    XChangeProperty(dpy, p->win, type, XA_ATOM, 32, PropModeReplace,
                     (unsigned char *)&dock, 1);
 
-    surf = cairo_xlib_surface_create(dpy, win, DefaultVisual(dpy, screen),
-                                     w, h);
-    px = x;
-    py = y;
-    pw = w;
-    ph = h;
+    p->surf = cairo_xlib_surface_create(dpy, p->win,
+                                        DefaultVisual(dpy, screen), w, h);
+    p->x = x;
+    p->y = y;
+    p->w = w;
+    p->h = h;
+}
+
+/* Moves/sizes one panel window and brings it on screen at its new place. */
+static void
+place_panel(struct panel *p, int x, int y, int w, int h, int force)
+{
+    if (!p->win) {
+        create_panel(p, x, y, w, h);
+        force = 1;
+    } else if (x != p->x || y != p->y || w != p->w || h != p->h) {
+        cairo_xlib_surface_set_size(p->surf, w, h);
+        XMoveResizeWindow(dpy, p->win, x, y, (unsigned)w, (unsigned)h);
+        p->x = x;
+        p->y = y;
+        p->w = w;
+        p->h = h;
+        force = 1;
+    }
+    if (!p->mapped) {
+        XMapRaised(dpy, p->win);
+        p->mapped = 1;
+        force = 1;
+    }
+    if (force)
+        draw(p);
+}
+
+/* Takes one panel off screen (dwm's bar hidden, or no segments in it). */
+static void
+hide_panel(struct panel *p)
+{
+    if (p->win && p->mapped) {
+        XUnmapWindow(dpy, p->win);
+        p->mapped = 0;
+    }
 }
 
 /*
- * Brings the panel in line with dwm's bar and the current segments: height,
- * position (right end of the bar), visibility. Redraws when anything changed
- * or when force is set.
+ * Brings both panels in line with dwm's bar and the current segments:
+ * height, position (clock in the middle, volume/power at the right end),
+ * visibility. Redraws when anything changed or when force is set.
  */
 static void
 update_panel(int rescan, int force)
 {
     int bx = 0, by = 0, bw = 0, bh = 0, have_bar;
-    int nx, ny, nw, nh, hidden = 0;
+    int nh, hidden = 0, widths[NPANELS], nx[NPANELS], ny[NPANELS];
+    int sw, i;
 
     have_bar = bar_geometry(rescan, &bx, &by, &bw, &bh);
     if (have_bar) {
@@ -803,44 +856,41 @@ update_panel(int rescan, int force)
         build_fonts(nh);
         force = 1;
     }
-    nw = layout(nh);
-    if (nw <= 0)
+
+    for (i = 0; i < NPANELS; i++)
+        widths[i] = layout(nh, i);
+    if (widths[PANEL_CLOCK] <= 0 && widths[PANEL_RIGHT] <= 0)
         hidden = 1;
 
     if (hidden) {
-        if (panel_mapped) {
-            XUnmapWindow(dpy, win);
-            panel_mapped = 0;
-            XFlush(dpy);
-        }
+        for (i = 0; i < NPANELS; i++)
+            hide_panel(&panels[i]);
+        XFlush(dpy);
         return;
     }
 
-    nx = have_bar ? bx + bw - nw : DisplayWidth(dpy, screen) - nw;
-    ny = have_bar ? by : 0;
-    if (nx < 0)
-        nx = 0;
+    sw = DisplayWidth(dpy, screen);
+    /* The clock is centred on dwm's bar (or on the screen without one). */
+    nx[PANEL_CLOCK] = (have_bar ? bx + bw / 2 : sw / 2)
+                      - widths[PANEL_CLOCK] / 2;
+    nx[PANEL_RIGHT] = have_bar ? bx + bw - widths[PANEL_RIGHT]
+                               : sw - widths[PANEL_RIGHT];
+    ny[PANEL_CLOCK] = ny[PANEL_RIGHT] = have_bar ? by : 0;
 
-    if (!win) {
-        create_panel(nx, ny, nw, nh);
-        force = 1;
-    } else if (nx != px || ny != py || nw != pw || nh != ph) {
-        cairo_xlib_surface_set_size(surf, nw, nh);
-        XMoveResizeWindow(dpy, win, nx, ny, (unsigned)nw, (unsigned)nh);
-        px = nx;
-        py = ny;
-        pw = nw;
-        ph = nh;
-        force = 1;
+    for (i = 0; i < NPANELS; i++) {
+        if (widths[i] <= 0) {
+            hide_panel(&panels[i]);
+            continue;
+        }
+        if (nx[i] < 0)
+            nx[i] = 0;
+        if (nx[i] + widths[i] > sw)
+            nx[i] = sw - widths[i];
+        if (nx[i] < 0)
+            nx[i] = 0;
+        place_panel(&panels[i], nx[i], ny[i], widths[i], nh, force);
     }
-
-    if (!panel_mapped) {
-        XMapRaised(dpy, win);
-        panel_mapped = 1;
-        force = 1;
-    }
-    if (force)
-        draw();
+    XFlush(dpy);
 }
 
 /* ----------------------------------------------------------------- clicks */
@@ -851,7 +901,7 @@ update_panel(int rescan, int force)
  * the popup can open right below (or above) the panel.
  */
 static void
-spawn_popup(const char *arg)
+spawn_popup(const char *arg, struct panel *p)
 {
     const char *cmd;
     pid_t pid;
@@ -882,7 +932,8 @@ spawn_popup(const char *arg)
             _exit(g < 0 ? 1 : 0);
 
         setsid();
-        snprintf(anchor, sizeof(anchor), "%d,%d,%d,%d", px, py, pw, ph);
+        snprintf(anchor, sizeof(anchor), "%d,%d,%d,%d",
+                 p->x, p->y, p->w, p->h);
         setenv("DWMSTATUS_PANEL", anchor, 1);
         if ((devnull = open("/dev/null", O_RDWR)) >= 0) {
             dup2(devnull, STDIN_FILENO);
@@ -902,16 +953,17 @@ spawn_popup(const char *arg)
 }
 
 static void
-buttonpress(XButtonEvent *ev)
+buttonpress(struct panel *p, XButtonEvent *ev)
 {
     size_t i;
 
     if (ev->button != Button1)
         return;
     for (i = 0; i < NSEG; i++) {
-        if (segs[i].w > 0 && ev->x >= segs[i].x &&
-            ev->x < segs[i].x + segs[i].w) {
-            spawn_popup(segs[i].arg);
+        if (segs[i].panel != p - panels || segs[i].w == 0)
+            continue;
+        if (ev->x >= segs[i].x && ev->x < segs[i].x + segs[i].w) {
+            spawn_popup(segs[i].arg, p);
             return;
         }
     }
@@ -960,6 +1012,7 @@ main(int argc, char *argv[])
     long long now, next_tick, next_volume, next_discovery;
     struct pollfd pfd;
     int tick = 0, changed, redraw, timeout;
+    size_t i;
     const char *font;
 
     if (argc == 2 && strcmp(argv[1], "-v") == 0) {
@@ -1039,13 +1092,18 @@ main(int argc, char *argv[])
         XFlush(dpy);
         while (XPending(dpy)) {
             XEvent ev;
+            int i, hit = -1;
 
             XNextEvent(dpy, &ev);
-            if (ev.type == Expose && ev.xexpose.window == win &&
-                ev.xexpose.count == 0)
+            for (i = 0; i < NPANELS; i++)
+                if (ev.xany.window == panels[i].win)
+                    hit = i;
+            if (hit < 0)
+                continue;
+            if (ev.type == Expose && ev.xexpose.count == 0)
                 redraw = 1;
-            else if (ev.type == ButtonPress && ev.xbutton.window == win)
-                buttonpress(&ev.xbutton);
+            else if (ev.type == ButtonPress)
+                buttonpress(&panels[hit], &ev.xbutton);
         }
 
         now = now_ms();
@@ -1084,10 +1142,12 @@ main(int argc, char *argv[])
 
     XStoreName(dpy, root, "");
     free_fonts();
-    if (surf)
-        cairo_surface_destroy(surf);
-    if (win)
-        XDestroyWindow(dpy, win);
+    for (i = 0; i < NPANELS; i++) {
+        if (panels[i].surf)
+            cairo_surface_destroy(panels[i].surf);
+        if (panels[i].win)
+            XDestroyWindow(dpy, panels[i].win);
+    }
     XCloseDisplay(dpy);
     cairo_debug_reset_static_data(); /* release Cairo's global caches */
     return 0;
