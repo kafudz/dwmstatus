@@ -43,7 +43,7 @@ ICON_CLOCK = "\uf017"     # nf-fa-clock_o
 ICON_CALENDAR = "\uf073"  # nf-fa-calendar
 
 # Visible gaps between an icon and its label, in pixels.
-CLOCK_ICON_GAP = 28       # clock icon -> live time and date
+CLOCK_ICON_GAP = 28       # icon -> right-aligned text in the clock/weather rows
 ICON_TEXT_GAP = 12        # calendar icon -> "Calendar" heading
 
 # Weather comes from Open-Meteo (no API key).  It is fetched in a background
@@ -217,12 +217,13 @@ def popup():
 
     # --- weather ----------------------------------------------------------
     weather_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
-                          spacing=ICON_TEXT_GAP)
+                          spacing=CLOCK_ICON_GAP)
     weather_box.set_border_width(6)
     weather_glyph = Gtk.Label(label="\uf0c2")
     weather_glyph.get_style_context().add_class("dwmstatus-icon")
     weather_glyph.set_valign(Gtk.Align.CENTER)
-    weather_label = Gtk.Label(label="Loading weather…", xalign=0)
+    # Match the clock row: icon on the left, status text on the right edge.
+    weather_label = Gtk.Label(label="Loading weather…", xalign=1)
     weather_label.get_style_context().add_class("dwmstatus-weather")
     weather_box.pack_start(weather_glyph, False, False, 0)
     weather_box.pack_start(weather_label, True, True, 0)
