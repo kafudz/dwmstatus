@@ -172,6 +172,10 @@ def popup(control, name):
     win.connect("focus-out-event", on_focus_out)
     win.connect("destroy", Gtk.main_quit)
 
+    # Start the grace period before mapping: show/present can emit a focus-out
+    # immediately, and a zero timestamp would make that look like a late
+    # dismissal and destroy the popup while it is still opening.
+    shown_at[0] = GLib.get_monotonic_time()
     win.show_all()
     win.present()
 
@@ -191,7 +195,6 @@ def popup(control, name):
             y = geometry.y + geometry.height - height - 8
         win.move(x, y)
 
-    shown_at[0] = GLib.get_monotonic_time()
     Gtk.main()
     return 0
 
