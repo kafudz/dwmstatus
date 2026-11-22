@@ -11,9 +11,9 @@ Sections that have no working backend are hidden (no NetworkManager, no
 Bluetooth controller, ...).
 
 When the panel starts the popup it sets DWMSTATUS_PANEL="x,y,w,h"; the popup
-then opens right below the panel (above it for a bottom bar), aligned to its
-right edge.  Without it the popup appears 40 px from the top and 15 px from
-the right edge of the monitor.
+then opens right below the panel (above it for a bottom bar), slightly inset
+from its right edge.  Without it the popup appears 40 px from the top and
+15 px from the right edge of the monitor.
 """
 
 import fcntl
@@ -54,6 +54,9 @@ ICON_LOCK = "\uf023"        # nf-fa-lock
 ICON_LOGOUT = "\uf08b"      # nf-fa-sign_out
 ICON_SUSPEND = "\uf186"     # nf-fa-moon_o
 ICON_REBOOT = "\uf021"      # nf-fa-refresh
+
+# Shift the system popup slightly left of the panel's right edge (pixels).
+POPUP_RIGHT_INSET = 20
 
 # action -> (icon, label); order is the order of the buttons
 POWER_BUTTONS = {
@@ -214,7 +217,8 @@ def popup(initial):
         threading.Thread(target=runner, daemon=True).start()
 
     # Where to put the popup: under the panel (above it for a bottom bar),
-    # right edges aligned; the pointer's monitor when there is no panel info.
+    # inset a little from its right edge; the pointer's monitor when there is
+    # no panel info.
     anchor = None
     try:
         ax, ay, aw, ah = (int(v) for v in
@@ -247,6 +251,8 @@ def popup(initial):
             place["right"] = (ax + aw) if anchor \
                 else geometry.x + geometry.width - 15
             place["avail"] = geometry.y + geometry.height - place["edge"] - 10
+    if place["right"] is not None:
+        place["right"] -= POPUP_RIGHT_INSET
     place["avail"] = max(240, place["avail"])
 
     def message_label():
