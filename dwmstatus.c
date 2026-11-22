@@ -64,7 +64,7 @@ Build: see Makefile (needs cairo and X11).
 #define ICON_POWER        "\xef\x80\x91"  /* U+F011 nf-fa-power_off */
 
 /* Gap between the centred bar clock's icon and its HH:MM text. */
-#define CLOCK_ICON_GAP    "   "
+#define CLOCK_ICON_GAP    "  "
 
 enum { COL_BG, COL_FG, COL_DIM, NCOL };
 
