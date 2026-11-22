@@ -63,6 +63,9 @@ Build: see Makefile (needs cairo and X11).
 #define ICON_CLOCK        "\xef\x80\x97"  /* U+F017 nf-fa-clock_o */
 #define ICON_POWER        "\xef\x80\x91"  /* U+F011 nf-fa-power_off */
 
+/* Gap between the centred bar clock's icon and its HH:MM text. */
+#define CLOCK_ICON_GAP    "   "
+
 enum { COL_BG, COL_FG, COL_DIM, NCOL };
 
 /* Two windows: the clock sits alone in the middle of the bar, the volume and
@@ -455,7 +458,7 @@ refresh_clock(void)
         return 0;
     if (strftime(text, sizeof(text), "%H:%M", &tm) == 0)
         return 0;
-    snprintf(buf, sizeof(buf), "%s %s", ICON_CLOCK, text);
+    snprintf(buf, sizeof(buf), "%s%s%s", ICON_CLOCK, CLOCK_ICON_GAP, text);
     return setseg(s, buf, COL_FG);
 }
 
