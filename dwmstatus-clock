@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""dwmstatus-clock - a small clock popup for the dwmstatus panel.
+"""dwmstatus-clock - the clock and calendar popup for the dwmstatus panel.
 
-A left click on the clock segment opens this window.  It only shows the time
-and the date; the calendar has its own popup, dwmstatus-calendar (a right
-click on the clock segment).
+A left click on the clock segment opens this window.  It shows the live time
+and date, followed by a month calendar with its own previous/next navigation.
 
 When the panel starts the popup it sets DWMSTATUS_PANEL="x,y,w,h"; the popup
 then opens right below the panel (above it for a bottom bar), aligned to its
@@ -35,7 +34,8 @@ except ImportError:
     sys.exit("dwmstatus-clock: dwmstatus_gtk.py not found "
              "(run 'make install' from the dwmstatus repo)")
 
-ICON_CLOCK = "\uf017"  # nf-fa-clock_o
+ICON_CLOCK = "\uf017"     # nf-fa-clock_o
+ICON_CALENDAR = "\uf073"  # nf-fa-calendar
 
 
 def popup():
@@ -56,6 +56,8 @@ def popup():
     win = ui.make_window(Gtk, Gdk, GLib)
 
     content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+
+    # --- clock ------------------------------------------------------------
     clock_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
     clock_box.set_border_width(6)
 
@@ -74,6 +76,7 @@ def popup():
     clock_box.pack_start(glyph, False, False, 0)
     clock_box.pack_start(text_box, True, True, 0)
     content.pack_start(clock_box, False, False, 0)
+    content.pack_start(Gtk.Separator(), False, False, 0)
 
     def tick_clock():
         now = datetime.datetime.now()
@@ -84,9 +87,80 @@ def popup():
     tick_clock()
     GLib.timeout_add_seconds(1, tick_clock)
 
+    # --- calendar ---------------------------------------------------------
+    today = datetime.date.today()
+
+    def date_text(day):
+        return f"{day:%a, %d %b %Y}"
+
+    cal_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    cal_box.set_border_width(6)
+    cal_value = Gtk.Label(label=date_text(today), xalign=1)
+    calendar = Gtk.Calendar()
+    calendar.set_display_options(Gtk.CalendarDisplayOptions.SHOW_DAY_NAMES)
+    calendar.select_month(today.month - 1, today.year)
+    calendar.select_day(today.day)
+
+    # Own month header instead of GtkCalendar's built-in one, so the < and >
+    # buttons can have breathing room around them.
+    nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+    nav.set_border_width(2)
+    month_label = Gtk.Label(xalign=0.5)
+    month_label.get_style_context().add_class("dwmstatus-title")
+    month_label.get_style_context().add_class("dwmstatus-month")
+    prev_month = Gtk.Button(label="<")
+    next_month = Gtk.Button(label=">")
+    for button in (prev_month, next_month):
+        button.get_style_context().add_class("dwmstatus-nav")
+    nav.pack_start(prev_month, False, False, 0)
+    nav.pack_start(month_label, True, True, 0)
+    nav.pack_end(next_month, False, False, 0)
+
+    def update_month_label():
+        year, month, _ = calendar.get_date()
+        month_label.set_text(
+            datetime.date(year, month + 1, 1).strftime("%B %Y"))
+        on_day_selected(calendar)
+
+    def shift_month(delta):
+        year, month, _ = calendar.get_date()
+        month += delta
+        year += month // 12
+        month %= 12
+        calendar.select_month(month, year)
+        update_month_label()
+
+    def on_day_selected(widget):
+        year, month, day = widget.get_date()
+        cal_value.set_text(date_text(datetime.date(year, month + 1, day)))
+
+    prev_month.connect("clicked", lambda _button: shift_month(-1))
+    next_month.connect("clicked", lambda _button: shift_month(1))
+    calendar.connect("month-changed", lambda _calendar: update_month_label())
+    calendar.connect("day-selected", on_day_selected)
+    update_month_label()
+
+    heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    cal_glyph = Gtk.Label(label=ICON_CALENDAR)
+    cal_glyph.get_style_context().add_class("dwmstatus-icon")
+    cal_glyph.set_valign(Gtk.Align.CENTER)
+    name = Gtk.Label(label="Calendar", xalign=0)
+    name.get_style_context().add_class("dwmstatus-title")
+    heading.pack_start(cal_glyph, False, False, 0)
+    heading.pack_start(name, True, True, 0)
+    heading.pack_end(cal_value, False, False, 0)
+
+    cal_box.pack_start(heading, False, False, 0)
+    cal_box.pack_start(nav, False, False, 0)
+    cal_box.pack_start(calendar, False, False, 0)
+    content.pack_start(cal_box, False, False, 0)
+
     display = Gdk.Display.get_default()
     geometry, place = ui.placement(display)
     ui.present(win, content, geometry, place, Gtk, Gdk, GLib)
+
+    # Give the calendar the focus so the arrow keys work immediately.
+    calendar.grab_focus()
     Gtk.main()
     return 0
 
