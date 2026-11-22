@@ -6,8 +6,9 @@ dwmstatus \- panel status mandiri untuk dynamic window manager (dwm)
 .RB [ \-v ]
 .SH DESCRIPTION
 .B dwmstatus
-adalah panel status ringan bergaya polybar: jendela X sendiri, digambar dengan
-Cairo, yang berada di ujung kanan bar dwm. Panel ini
+adalah panel status ringan bergaya polybar: dua jendela X kecil, digambar
+dengan Cairo, yang menutupi bar dwm. Jam berada di tengah bar; volume dan
+tombol daya tetap di ujung kanan. Panel ini
 .B tidak
 menulis teks status dwm (nama root window) dan tidak memerlukan patch dwm;
 klik ditangani oleh panel itu sendiri.
@@ -26,10 +27,12 @@ hanya digambar ulang saat tampilannya berubah.
 .P
 Panel mencari jendela bar dwm (kelas jendela
 .IR dwm ),
-memakai tingginya, menempel di ujung kanannya, mengikutinya ke bawah bila
+memakai tingginya, menempatkan jam di tengah bar dan tombol volume/daya di
+ujung kanan, mengikutinya ke bawah bila
 .I topbar
-dimatikan, dan bersembunyi saat bar dwm disembunyikan. Tanpa dwm, panel muncul
-di kanan atas layar. Hanya satu panel yang berjalan per pengguna dan display.
+dimatikan, dan bersembunyi saat bar dwm disembunyikan. Tanpa dwm, jam muncul
+di tengah bagian atas layar dan tombol tetap di kanan atas. Hanya satu panel
+yang berjalan per pengguna dan display.
 .P
 Diperlukan Nerd Font. Dwmstatus juga menulis satu spasi ke nama root window agar
 dwm tidak menampilkan teks
@@ -57,6 +60,12 @@ dwmstatus-popup).
 .B DWMSTATUS_CLOCK
 Perintah popup gabungan jam dan kalender (default: dwmstatus-clock).
 .TP
+.B DWMSTATUS_PANEL_ALIGN
+.IR right " atau " center .
+Nilai
+.I center
+menempatkan popup tepat di bawah segmennya; popup jam memakainya.
+.TP
 .B DWMSTATUS_TZ
 Zona waktu jam di bar dan popup jam/kalender (default: Asia/Jakarta).
 .TP
@@ -68,6 +77,8 @@ Klik kiri pada bagian volume atau tombol daya menjalankan
 .BR dwmstatus-popup ,
 popup GTK 3 sistem yang difokuskan pada bagian yang diklik. Popup muncul
 tepat di bawah panel (di atasnya untuk bar bawah), rata dengan tepi kanan panel.
+Popup jam mengikuti bagian jam yang berada di tengah, sehingga muncul tepat di
+bawah jam (atau di tengah layar bila dijalankan langsung).
 Judul jendelanya `status`. Klik lagi pada bagian yang sama, tombol
 .BR Esc ,
 .BR Return ,

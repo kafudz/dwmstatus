@@ -1,8 +1,8 @@
 """Shared GTK 3 scaffolding for the dwmstatus popup windows.
 
-The clock and calendar popups are small enough to share everything except
-their content: the window style, the single-instance lock, the placement
-next to the panel and the dismissal behaviour all live here.
+The bar and its popups share the window style, the single-instance lock, the
+placement next to their panel segment and the dismissal behaviour. Each popup
+only supplies its own content.
 """
 
 import fcntl
@@ -78,9 +78,8 @@ def install_css(Gtk, Gdk):
 def claim_lock(kind):
     """Claim the single-instance lock, or close the open popup and exit.
 
-    Each popup has its own lock, so the clock and the calendar can be opened
-    independently.  A second invocation of the same popup asks the running
-    one to close.
+    Every popup has its own lock, so opening one does not close a different
+    one. A second invocation of the same popup asks the running one to close.
     """
     runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
     path = os.path.join(runtime, f"dwmstatus-{kind}-{os.getuid()}.lock")
@@ -126,9 +125,11 @@ def placement(display):
     """Where to put the popup.
 
     With DWMSTATUS_PANEL="x,y,w,h" (set by the panel) the popup goes right
-    below the panel, or above it for a bottom bar, with the right edges
-    aligned.  Without it it appears 40 px from the top and 15 px from the
-    right edge of the monitor under the pointer.
+    below the panel, or above it for a bottom bar.  DWMSTATUS_PANEL_ALIGN
+    selects "right" (right edges aligned, the default) or "center" (centred
+    under the anchor, used by the clock).  Without an anchor the popup
+    appears 40 px from the top, 15 px from the right edge, or in the middle
+    of the monitor when centred.
     """
     anchor = None
     try:
@@ -137,6 +138,8 @@ def placement(display):
         anchor = (ax, ay, aw, ah)
     except ValueError:
         pass
+
+    centered = os.environ.get("DWMSTATUS_PANEL_ALIGN") == "center"
 
     if anchor:
         monitor = display.get_monitor_at_point(ax + aw // 2, ay + ah // 2)
@@ -149,18 +152,25 @@ def placement(display):
 
     gap = 6
     # below: popup's top edge is `edge`; otherwise its bottom edge is `edge`
-    place = {"below": True, "edge": 40, "right": None, "avail": 600}
+    place = {"below": True, "edge": 40, "right": None, "center": None,
+             "avail": 600}
     if geometry is not None:
-        if anchor and ay + ah // 2 > geometry.y + geometry.height // 2:
+        above = anchor and ay + ah // 2 > geometry.y + geometry.height // 2
+        if above:
             place["below"] = False
             place["edge"] = ay - gap
-            place["right"] = ax + aw
             place["avail"] = place["edge"] - geometry.y - 10
         else:
             place["edge"] = (ay + ah + gap) if anchor else geometry.y + 40
-            place["right"] = (ax + aw) if anchor \
-                else geometry.x + geometry.width - 15
             place["avail"] = geometry.y + geometry.height - place["edge"] - 10
+
+        if centered:
+            place["center"] = (ax + aw // 2) if anchor else \
+                geometry.x + geometry.width // 2
+        elif anchor:
+            place["right"] = ax + aw
+        else:
+            place["right"] = geometry.x + geometry.width - 15
     place["avail"] = max(240, place["avail"])
     return geometry, place
 
@@ -203,11 +213,17 @@ def present(win, content, geometry, place, Gtk, Gdk, GLib):
     last_position = [None]
 
     def reposition(*_args):
-        """Right edge on the panel's right edge; below it (or above it)."""
-        if geometry is None or place["right"] is None:
+        """Right edge on the panel's right edge, or centred under it."""
+        if geometry is None:
             return False
         width, height = win.get_size()
-        x = max(geometry.x, place["right"] - width)
+        if place["center"] is not None:
+            x = place["center"] - width // 2
+        elif place["right"] is not None:
+            x = place["right"] - width
+        else:
+            return False
+        x = max(geometry.x, min(x, geometry.x + geometry.width - width))
         y = place["edge"] if place["below"] else place["edge"] - height
         y = max(geometry.y, y)
         if last_position[0] != (x, y):

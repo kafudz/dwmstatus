@@ -1,9 +1,10 @@
 # dwmstatus
 
 My personal status panel for [dwm](https://dwm.suckless.org/).  
-A small, polybar-style panel: its own X window that sits over the right end of
-dwm's bar, with its own click handling. It does **not** write dwm's status
-text and needs **no dwm patch**.
+A small, polybar-style panel: two small X windows over dwm's bar, with its own
+click handling. The clock sits in the middle of the bar; volume and power stay
+at its right end. It does **not** write dwm's status text and needs **no dwm
+patch**.
 
 Based on the classic `dwmstatus` by **20h**.
 
@@ -29,9 +30,10 @@ one popup with the live clock, the date and a month calendar. The volume and
 power popups hold the percentages, sliders and controls described under
 [Click actions](#click-actions).
 
-The panel finds dwm's bar (window class `dwm`), copies its height, sits at its
-right end, follows it to the bottom if `topbar = 0`, and hides while dwm's bar
-is hidden. Without dwm it falls back to the top-right of the screen.
+The panel finds dwm's bar (window class `dwm`), copies its height, centres the
+clock on it and keeps volume/power at its right end. It follows the bar to the
+bottom if `topbar = 0` and hides while dwm's bar is hidden. Without dwm the
+clock is centred at the top and the buttons stay at the top-right.
 Uses a Nerd Font, so make sure one is installed.
 
 ## Build
@@ -70,6 +72,7 @@ root window name so dwm does not show its `dwm-x.y` banner next to the panel.
 | `DWMSTATUS_HEIGHT` | `24` | panel height when no dwm bar is found |
 | `DWMSTATUS_POPUP` | `dwmstatus-popup` | system popup (volume, power, ...) |
 | `DWMSTATUS_CLOCK` | `dwmstatus-clock` | clock and calendar popup |
+| `DWMSTATUS_PANEL_ALIGN` | `right` | `center` centres a popup under its segment; the clock uses it |
 | `DWMSTATUS_TZ` | `Asia/Jakarta` | time zone of the bar clock and the popup |
 | `DWMSTATUS_LOCK`, `_LOGOUT`, `_SUSPEND`, `_REBOOT`, `_POWEROFF` | auto | power menu commands |
 
@@ -78,9 +81,11 @@ root window name so dwm does not show its `dwm-x.y` banner next to the panel.
 A left click on the volume or power segment opens the system GTK 3 popup,
 `dwmstatus-popup`, focused on that section. A left click on the clock opens
 `dwmstatus-clock`, one popup that contains both the live clock and the calendar.
-All popups open right below the panel (above it for a bottom bar), aligned to
-the panel's right edge, with the window title `status`. Clicking the same
-segment again closes its popup, as do `Esc`, `Return` and clicking elsewhere.
+All popups open right below their segment (above it for a bottom bar), with the
+window title `status`. The system popup is right-aligned with its panel; the
+clock popup is centred under the clock (or in the middle of the monitor when
+launched directly). Clicking the same segment again closes its popup, as do
+`Esc`, `Return` and clicking elsewhere.
 
 The clock and calendar popup shows the live time and date at the top, followed
 by the current month with its own `<` / `>` month navigation.

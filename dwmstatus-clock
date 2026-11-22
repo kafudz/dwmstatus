@@ -4,10 +4,8 @@
 A left click on the clock segment opens this window.  It shows the live time
 and date, followed by a month calendar with its own previous/next navigation.
 
-When the panel starts the popup it sets DWMSTATUS_PANEL="x,y,w,h"; the popup
-then opens right below the panel (above it for a bottom bar), aligned to its
-right edge.  Without it the popup appears 40 px from the top and 15 px from
-the right edge of the monitor.
+The popup is horizontally centred: under the clock segment when the panel
+anchors it, otherwise in the middle of the monitor, 40 px from the top.
 """
 
 import datetime
@@ -21,6 +19,9 @@ _os_tz = os.environ.get("DWMSTATUS_TZ") or "Asia/Jakarta"
 if _os_tz:
     os.environ["TZ"] = _os_tz
     time.tzset()
+
+# The bar clock is centred, so its popup is centred as well.
+os.environ.setdefault("DWMSTATUS_PANEL_ALIGN", "center")
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 for _path in (HERE, os.path.join(HERE, os.pardir, "lib", "dwmstatus")):
@@ -58,7 +59,7 @@ def popup():
     content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
 
     # --- clock ------------------------------------------------------------
-    clock_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+    clock_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=20)
     clock_box.set_border_width(6)
 
     glyph = Gtk.Label(label=ICON_CLOCK)
