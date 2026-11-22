@@ -38,6 +38,10 @@ except ImportError:
 ICON_CLOCK = "\uf017"     # nf-fa-clock_o
 ICON_CALENDAR = "\uf073"  # nf-fa-calendar
 
+# Visible gaps between an icon and its label, in pixels.
+CLOCK_ICON_GAP = 28       # clock icon -> live time and date
+ICON_TEXT_GAP = 12        # calendar icon -> "Calendar" heading
+
 
 def popup():
     if ui.claim_lock("clock") is None:
@@ -59,7 +63,8 @@ def popup():
     content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
 
     # --- clock ------------------------------------------------------------
-    clock_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=20)
+    clock_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                        spacing=CLOCK_ICON_GAP)
     clock_box.set_border_width(6)
 
     glyph = Gtk.Label(label=ICON_CLOCK)
@@ -141,7 +146,8 @@ def popup():
     calendar.connect("day-selected", on_day_selected)
     update_month_label()
 
-    heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                      spacing=ICON_TEXT_GAP)
     cal_glyph = Gtk.Label(label=ICON_CALENDAR)
     cal_glyph.get_style_context().add_class("dwmstatus-icon")
     cal_glyph.set_valign(Gtk.Align.CENTER)
