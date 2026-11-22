@@ -95,18 +95,18 @@ by the current month with its own `<` / `>` month navigation.
 Sections of the system popup, top to bottom (those without a working backend
 are hidden):
 
-- **Power**: Lock, Log out, Suspend, Reboot, Power off. Log out, Reboot and
-  Power off ask for confirmation first (the focus starts on *Cancel*).
-  Also shows the uptime.
 - **Brightness**, **Volume** (with mute) and **Battery**.
 - **Network** (NetworkManager): current connection and IP, Wi-Fi on/off switch,
   and a list of nearby networks. Click one to connect, click the active one to
   disconnect. A new secured network asks for its password.
 - **Bluetooth** (BlueZ): power switch and the paired devices; click one to
   connect or disconnect it.
+- **Power**: Lock, Log out, Suspend, Reboot, Power off. Log out, Reboot and
+  Power off ask for confirmation first (the focus starts on *Cancel*).
+  Also shows the uptime.
 
-Network and Bluetooth sit below Battery, so the brightness/volume sliders and
-battery state stay near the top of the popup.
+The sliders and battery stay near the top; Network, Bluetooth and Power follow.
+The popup is kept inside the monitor and scrolls when the screen is too small.
 
 The popups need Python 3, PyGObject and GTK 3 (Arch packages `python`,
 `python-gobject`, `gtk3`). Backends:
