@@ -7,6 +7,7 @@ does NOT write dwm's status text and needs no dwm patch; it handles its own
 clicks.
 
 Segments, left to right (a segment that is not available is hidden):
+    caps  Caps Lock (only while active)        } right end of the bar
     vol   volume (wpctl)                       } right end of the bar
     tim   clock icon and time (opens popup)    } centre of the bar
     pwr   power button (opens the power menu)  } right end of the bar
@@ -38,6 +39,7 @@ Build: see Makefile (needs cairo and X11).
 #include <time.h>
 #include <unistd.h>
 #include <X11/Xlib.h>
+#include <X11/XKBlib.h>
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
 #include <cairo/cairo.h>
@@ -47,7 +49,7 @@ Build: see Makefile (needs cairo and X11).
 #define VERSION "unknown"
 #endif
 
-/* Intervals (milliseconds). */
+/* Intervals (milliseconds). Caps Lock is event driven and needs no polling. */
 #define TICK_INTERVAL_MS       1000  /* dwm bar geometry */
 #define VOLUME_INTERVAL_MS     2000  /* spawning wpctl is the expensive part */
 #define VOLUME_TIMEOUT_MS       200  /* do not let a stuck wpctl freeze us */
@@ -62,11 +64,12 @@ Build: see Makefile (needs cairo and X11).
 #define ICON_VOL_HIGH     "\xef\x80\xa8"  /* U+F028 nf-fa-volume_up */
 #define ICON_CLOCK        "\xef\x80\x97"  /* U+F017 nf-fa-clock_o */
 #define ICON_POWER        "\xef\x80\x91"  /* U+F011 nf-fa-power_off */
+#define ICON_CAPS_ON      "\xe2\x87\xaa"  /* U+21EA ⇪ CAPS LOCK */
 
 /* Gap between the centred bar clock's icon and its HH:MM text. */
 #define CLOCK_ICON_GAP    "  "
 
-enum { COL_BG, COL_FG, COL_DIM, NCOL };
+enum { COL_BG, COL_FG, COL_DIM, COL_ACCENT, NCOL };
 
 /* Two windows: the clock sits alone in the middle of the bar, the volume and
  * power buttons stay together at its right end. */
@@ -89,9 +92,10 @@ struct segment {
 };
 
 static struct segment segs[] = {
-    { "tim", "tim", "",          COL_FG, PANEL_CLOCK, 0, 0 },
-    { "vol", "vol", "",          COL_FG, PANEL_RIGHT, 0, 0 },
-    { "pwr", "pwr", ICON_POWER,  COL_FG, PANEL_RIGHT, 0, 0 },
+    { "tim", "tim", "",            COL_FG,     PANEL_CLOCK, 0, 0 },
+    { "caps", "", "",              COL_ACCENT, PANEL_RIGHT, 0, 0 },
+    { "vol", "vol", "",            COL_FG,     PANEL_RIGHT, 0, 0 },
+    { "pwr", "pwr", ICON_POWER,    COL_FG,     PANEL_RIGHT, 0, 0 },
 };
 #define NSEG (sizeof(segs) / sizeof(segs[0]))
 
@@ -99,11 +103,13 @@ static double palette[NCOL][3] = {
     { 0x10 / 255.0, 0x11 / 255.0, 0x13 / 255.0 }, /* bg: same as the popup */
     { 0xe6 / 255.0, 0xe6 / 255.0, 0xe6 / 255.0 }, /* fg */
     { 0x6b / 255.0, 0x6f / 255.0, 0x76 / 255.0 }, /* dim: off / muted */
+    { 0x35 / 255.0, 0x84 / 255.0, 0xe4 / 255.0 }, /* accent: Caps Lock on */
 };
 
 static Display *dpy;
 static Window root, barwin;
 static int screen;
+static int xkb_ok, xkb_event_base;
 static struct panel panels[NPANELS];
 static volatile sig_atomic_t running = 1;
 
@@ -460,6 +466,24 @@ refresh_clock(void)
         return 0;
     snprintf(buf, sizeof(buf), "%s%s%s", ICON_CLOCK, CLOCK_ICON_GAP, text);
     return setseg(s, buf, COL_FG);
+}
+
+/* -------------------------------------------------------------- caps lock */
+
+/* Show ⇪ only while Caps Lock is actually latched. */
+static int
+refresh_caps(void)
+{
+    XkbStateRec state;
+    struct segment *s = find_segment("caps");
+    const char *text = "";
+
+    if (s == NULL)
+        return 0;
+    if (XkbGetState(dpy, XkbUseCoreKbd, &state) == Success &&
+        (state.locked_mods & LockMask))
+        text = ICON_CAPS_ON;
+    return setseg(s, text, COL_ACCENT);
 }
 
 /* ------------------------------------------------------------------ fonts */
@@ -1057,6 +1081,7 @@ main(int argc, char *argv[])
     parse_color("DWMSTATUS_BG", COL_BG);
     parse_color("DWMSTATUS_FG", COL_FG);
     parse_color("DWMSTATUS_DIM", COL_DIM);
+    parse_color("DWMSTATUS_ACCENT", COL_ACCENT);
 
     /* The bar clock and the popup clock use the same time zone. */
     {
@@ -1076,7 +1101,20 @@ main(int argc, char *argv[])
     XDeleteProperty(dpy, root, XInternAtom(dpy, "_DWMSTATUS_SEGMENTS", False));
     XStoreName(dpy, root, " ");
 
+    /* Caps Lock is event driven; fall back to polling if XKB is unavailable. */
+    {
+        int opcode, error, major = XkbMajorVersion, minor = XkbMinorVersion;
+
+        if (XkbQueryExtension(dpy, &opcode, &xkb_event_base, &error, &major,
+                              &minor)) {
+            XkbSelectEventDetails(dpy, XkbUseCoreKbd, XkbStateNotify,
+                                  XkbModifierLockMask, XkbModifierLockMask);
+            xkb_ok = 1;
+        }
+    }
+
     discover();
+    refresh_caps();
     refresh_volume();
     refresh_clock();
     update_panel(1, 1);
@@ -1094,19 +1132,24 @@ main(int argc, char *argv[])
 
         XFlush(dpy);
         while (XPending(dpy)) {
-            XEvent ev;
+            XkbEvent ev;
             int i, hit = -1;
 
-            XNextEvent(dpy, &ev);
+            XNextEvent(dpy, &ev.core);
+            if (xkb_ok && ev.type == xkb_event_base &&
+                ev.any.xkb_type == XkbStateNotify) {
+                changed |= refresh_caps();
+                continue;
+            }
             for (i = 0; i < NPANELS; i++)
-                if (ev.xany.window == panels[i].win)
+                if (ev.core.xany.window == panels[i].win)
                     hit = i;
             if (hit < 0)
                 continue;
-            if (ev.type == Expose && ev.xexpose.count == 0)
+            if (ev.core.type == Expose && ev.core.xexpose.count == 0)
                 redraw = 1;
-            else if (ev.type == ButtonPress)
-                buttonpress(&panels[hit], &ev.xbutton);
+            else if (ev.core.type == ButtonPress)
+                buttonpress(&panels[hit], &ev.core.xbutton);
         }
 
         now = now_ms();
@@ -1122,6 +1165,8 @@ main(int argc, char *argv[])
         }
         if (now >= next_tick) {
             tick++;
+            if (!xkb_ok)
+                changed |= refresh_caps();
             changed |= refresh_clock();
             /* geometry of dwm's bar, with an occasional full search */
             update_panel(tick % BAR_RESCAN_TICKS == 0, changed || redraw);
